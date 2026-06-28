@@ -1,0 +1,56 @@
+"""Constants for the Person State integration."""
+
+from __future__ import annotations
+
+from typing import Final
+
+DOMAIN: Final = "person_state"
+
+# Core integration we augment. We do not own the person entity; we layer state
+# and attributes onto it. Keep in sync with HA's person component domain.
+PERSON_DOMAIN: Final = "person"
+
+# --- Config entry keys ------------------------------------------------------
+CONF_SUBJECT: Final = "subject"  # entity the states attach to (person.* for now)
+CONF_AWAY_FROM: Final = "away_from"  # presence value treated as "gone"
+CONF_AWAY_STATE: Final = "away_state"  # what to call it
+CONF_STATES: Final = "states"  # ordered list of state definitions
+
+# Per-state-definition keys
+CONF_NAME: Final = "name"
+CONF_CONDITION: Final = "condition"  # native HA condition config
+CONF_GRACE: Final = "grace"  # optional hysteresis modifier
+CONF_PERSIST: Final = "persist"  # optional out-of-window persistence modifier
+
+# Grace modifier keys (door-open trip still counts as the state for a while)
+CONF_GRACE_DOOR: Final = "door_entity_id"
+CONF_GRACE_OPEN_STATE: Final = "open_state"
+CONF_GRACE_SECONDS: Final = "seconds"
+
+# Persist modifier keys (stay in the state while a window helper is off)
+CONF_PERSIST_WINDOW: Final = "window_entity_id"
+CONF_PERSIST_WINDOW_OFF: Final = "window_off_state"
+CONF_PERSIST_DOOR: Final = "door_entity_id"
+CONF_PERSIST_CLOSED_STATE: Final = "closed_state"
+
+# --- Defaults ---------------------------------------------------------------
+DEFAULT_AWAY_FROM: Final = "not_home"
+DEFAULT_AWAY_STATE: Final = "away"
+DEFAULT_OPEN_STATE: Final = "on"
+DEFAULT_CLOSED_STATE: Final = "off"
+DEFAULT_WINDOW_OFF_STATE: Final = "off"
+DEFAULT_GRACE_SECONDS: Final = 300
+
+# Safety re-evaluation cadence so any condition `for:` we failed to schedule
+# precisely still converges. Event-driven updates are immediate; this is a net.
+SAFETY_REEVAL_SECONDS: Final = 60
+
+# Native presence value for "home" (zone names pass through the cascade).
+PRESENCE_HOME: Final = "home"
+
+# --- Attributes published onto the subject entity ---------------------------
+ATTR_PRESENCE: Final = "presence"  # raw state before the cascade
+
+# Storage for restoring the last composite state across restarts.
+STORAGE_KEY: Final = f"{DOMAIN}.last_state"
+STORAGE_VERSION: Final = 1

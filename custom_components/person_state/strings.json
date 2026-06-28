@@ -1,0 +1,82 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a subject",
+        "description": "Pick the person these states attach to. You'll add the states themselves next, under the integration's Configure menu.",
+        "data": {
+          "subject": "Person",
+          "away_from": "Presence value treated as away",
+          "away_state": "Name for the away state"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This subject is already managed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Person State",
+        "menu_options": {
+          "add_state": "Add a state",
+          "edit_state": "Edit a state",
+          "remove_state": "Remove states",
+          "settings": "Away mapping",
+          "save": "Save and finish"
+        }
+      },
+      "add_state": {
+        "title": "State",
+        "description": "Condition is native HA condition YAML (a single condition, or an and/or/not block). The state is active whenever it evaluates true. Grace and persist are optional carry-over rules.",
+        "data": {
+          "name": "State name",
+          "condition": "Condition (YAML)",
+          "enable_grace": "Enable open-door grace",
+          "door_entity_id": "Grace door",
+          "open_state": "Door open state",
+          "seconds": "Grace seconds",
+          "enable_persist": "Enable out-of-window persistence",
+          "window_entity_id": "Window helper",
+          "window_off_state": "Window off state",
+          "closed_state": "Door closed state"
+        }
+      },
+      "edit_state": {
+        "title": "Edit state",
+        "description": "Pick a state, or edit its fields.",
+        "data": {
+          "index": "State",
+          "name": "State name",
+          "condition": "Condition (YAML)",
+          "enable_grace": "Enable open-door grace",
+          "door_entity_id": "Grace door",
+          "open_state": "Door open state",
+          "seconds": "Grace seconds",
+          "enable_persist": "Enable out-of-window persistence",
+          "window_entity_id": "Window helper",
+          "window_off_state": "Window off state",
+          "closed_state": "Door closed state"
+        }
+      },
+      "remove_state": {
+        "title": "Remove states",
+        "data": {
+          "indexes": "States to remove"
+        }
+      },
+      "settings": {
+        "title": "Away mapping",
+        "data": {
+          "away_from": "Presence value treated as away",
+          "away_state": "Name for the away state"
+        }
+      }
+    },
+    "error": {
+      "invalid_yaml": "That is not valid YAML.",
+      "invalid_condition": "That is not a valid Home Assistant condition."
+    }
+  }
+}
