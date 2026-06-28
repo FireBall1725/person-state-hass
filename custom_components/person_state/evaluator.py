@@ -8,6 +8,8 @@ helper, then on each evaluation runs the cascade and layers the optional grace
 from __future__ import annotations
 
 import logging
+import time
+from collections import deque
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -18,6 +20,12 @@ from .core import grace_active, persist_active, pick_state
 from .models import SubjectConfig, collect_for_horizons
 
 _LOGGER = logging.getLogger(__name__)
+
+# Circuit breaker: if the cascade is applied more than this many times within
+# the window, assume a feedback loop and stop. This makes it impossible for any
+# loop (known or not) to hang the event loop / take HA down.
+_BREAKER_MAX = 25
+_BREAKER_WINDOW = 2.0  # seconds
 
 
 def _run_checker(checker: Any, hass: HomeAssistant) -> bool:
@@ -44,6 +52,27 @@ class StateEngine:
         self.entities: set[str] = set()
         # `for:` / grace durations to schedule precise re-evaluations
         self.for_horizons: list[float] = []
+        # circuit breaker state (see allow_apply)
+        self._apply_times: deque[float] = deque()
+        self.tripped: bool = False
+
+    def allow_apply(self) -> bool:
+        """Return False if the cascade is running away (feedback loop).
+
+        Once tripped, stays tripped until the entry reloads (a fresh engine is
+        built). The caller logs the trip once, with the watched entities, so the
+        offending source can be identified without HA going down.
+        """
+        if self.tripped:
+            return False
+        now = time.monotonic()
+        self._apply_times.append(now)
+        while self._apply_times and now - self._apply_times[0] > _BREAKER_WINDOW:
+            self._apply_times.popleft()
+        if len(self._apply_times) > _BREAKER_MAX:
+            self.tripped = True
+            return False
+        return True
 
     async def async_build(self) -> None:
         """Compile condition checkers and collect what to watch."""

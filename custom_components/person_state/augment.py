@@ -139,6 +139,22 @@ def remove_augmenter(hass: HomeAssistant) -> None:
 def _apply_cascade(entity, engine: "StateEngine", previous_state: str | None) -> None:
     """Override the just-computed presence with the composite state + attrs."""
     hass = entity.hass
+
+    # Circuit breaker: if we're being re-applied in a tight burst, a feedback
+    # loop is in progress. Stop applying (leave plain presence) so HA can't be
+    # hung, and log once with the watched entities to pinpoint the source.
+    if not engine.allow_apply():
+        if not getattr(engine, "_breaker_logged", False):
+            engine._breaker_logged = True
+            _LOGGER.error(
+                "person_state: circuit breaker tripped for %s — a feedback loop "
+                "is re-triggering the cascade. Watched entities: %s. Leaving "
+                "plain presence; fix the state config and reload to re-enable.",
+                engine.subject.subject_entity_id,
+                sorted(engine.entities),
+            )
+        return
+
     presence = getattr(entity, "_attr_state", None)  # core just set this
     state, active = engine.evaluate(presence, previous_state)
 
