@@ -19,6 +19,7 @@
     "step": {
       "init": {
         "title": "Person State",
+        "description": "States are evaluated top to bottom; the first one that matches wins.",
         "menu_options": {
           "add_state": "Add a state",
           "edit_state": "Edit a state",
@@ -27,12 +28,18 @@
           "save": "Save and finish"
         }
       },
-      "add_state": {
+      "edit_state": {
+        "title": "Edit state",
+        "data": {
+          "index": "State"
+        }
+      },
+      "state_meta": {
         "title": "State",
-        "description": "Condition is native HA condition YAML (a single condition, or an and/or/not block). The state is active whenever it evaluates true. Grace and persist are optional carry-over rules.",
+        "description": "Name the state and choose how to author its condition. Grace and persistence are optional carry-over rules layered on top of the condition.",
         "data": {
           "name": "State name",
-          "condition": "Condition (YAML)",
+          "mode": "Authoring mode",
           "enable_grace": "Enable open-door grace",
           "door_entity_id": "Grace door",
           "open_state": "Door open state",
@@ -43,21 +50,53 @@
           "closed_state": "Door closed state"
         }
       },
-      "edit_state": {
-        "title": "Edit state",
-        "description": "Pick a state, or edit its fields.",
+      "state_yaml": {
+        "title": "Condition (YAML)",
+        "description": "A native Home Assistant condition: a single condition, or an and/or/not block.",
         "data": {
-          "index": "State",
-          "name": "State name",
-          "condition": "Condition (YAML)",
-          "enable_grace": "Enable open-door grace",
-          "door_entity_id": "Grace door",
-          "open_state": "Door open state",
-          "seconds": "Grace seconds",
-          "enable_persist": "Enable out-of-window persistence",
-          "window_entity_id": "Window helper",
-          "window_off_state": "Window off state",
-          "closed_state": "Door closed state"
+          "condition": "Condition (YAML)"
+        }
+      },
+      "builder": {
+        "title": "Condition builder",
+        "description": "Current condition:\n{summary}",
+        "menu_options": {
+          "add_source": "Add a source",
+          "edit_source": "Edit a source",
+          "remove_source": "Remove sources",
+          "set_combine": "Set combine (AND/OR)",
+          "finish_builder": "Done"
+        }
+      },
+      "source_form": {
+        "title": "Source",
+        "description": "A single check. State match: the entity is one of the listed states. Numeric threshold: the entity's value is above and/or below a bound. 'For' requires it to hold that long.",
+        "data": {
+          "entity_id": "Entity",
+          "kind": "Check type",
+          "states": "Match states (state type)",
+          "negate": "Invert (entity is NOT one of these)",
+          "above": "Above (numeric type)",
+          "below": "Below (numeric type)",
+          "for_seconds": "For (seconds, optional)"
+        }
+      },
+      "edit_source": {
+        "title": "Edit source",
+        "data": {
+          "index": "Source"
+        }
+      },
+      "remove_source": {
+        "title": "Remove sources",
+        "data": {
+          "indexes": "Sources to remove"
+        }
+      },
+      "set_combine": {
+        "title": "Combine mode",
+        "data": {
+          "combine": "How to combine sources"
         }
       },
       "remove_state": {
@@ -76,7 +115,10 @@
     },
     "error": {
       "invalid_yaml": "That is not valid YAML.",
-      "invalid_condition": "That is not a valid Home Assistant condition."
+      "invalid_condition": "That is not a valid Home Assistant condition.",
+      "source_entity": "Pick an entity for this source.",
+      "source_states": "Add at least one match state, or switch to a numeric threshold.",
+      "source_bounds": "Set an above and/or below value for a numeric threshold."
     }
   }
 }
