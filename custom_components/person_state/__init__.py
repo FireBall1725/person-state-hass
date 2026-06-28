@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.start import async_at_started
 
 from .augment import (
     attach_listeners,
@@ -45,20 +46,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     install_augmenter(hass)
 
-    # person is a core component loaded before us (after_dependencies), so its
-    # entity already exists. Seed the restored composite state, then attach.
-    entity = get_person_entity(hass, subject.subject_entity_id)
-    if entity is None:
-        _LOGGER.warning(
-            "subject %s not loaded yet; will attach when it is added",
-            subject.subject_entity_id,
-        )
-    else:
+    # Attach once the person entity is guaranteed to exist. On a cold boot the
+    # person entity may not be registered when we set up, and patching
+    # async_added_to_hass can miss it depending on load order (one person wins
+    # the race, another loses). async_at_started fires after all entities are
+    # loaded, and immediately if HA is already running (e.g. a reload), so it
+    # attaches reliably in both cases.
+    @callback
+    def _attach(*_: object) -> None:
+        entity = get_person_entity(hass, subject.subject_entity_id)
+        if entity is None:
+            _LOGGER.warning(
+                "subject %s not found; cannot augment it",
+                subject.subject_entity_id,
+            )
+            return
         restored = data.last_state.get(subject.subject_entity_id)
         if restored is not None:
             entity._attr_state = restored  # so first eval sees what we were
         attach_listeners(hass, entity, engine)
 
+    entry.async_on_unload(async_at_started(hass, _attach))
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
 

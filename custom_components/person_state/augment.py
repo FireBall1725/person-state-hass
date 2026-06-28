@@ -82,14 +82,30 @@ def install_augmenter(hass: HomeAssistant) -> None:
         previous_state = getattr(self, "_attr_state", None)
         orig_update(self)
         engine = _engine_for(self)
-        if engine is not None:
+        if engine is None:
+            return
+        # never let our layer break core's person update: on any failure the
+        # entity keeps the plain presence core just wrote.
+        try:
             _apply_cascade(self, engine, previous_state)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "person_state cascade failed for %s; left plain presence",
+                getattr(self, "entity_id", "?"),
+            )
 
     async def _patched_added(self) -> None:
         await orig_added(self)
         engine = _engine_for(self)
-        if engine is not None:
+        if engine is None:
+            return
+        try:
             attach_listeners(self.hass, self, engine)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "person_state failed to attach listeners for %s",
+                getattr(self, "entity_id", "?"),
+            )
 
     Person._update_state = _patched_update
     Person.async_added_to_hass = _patched_added
