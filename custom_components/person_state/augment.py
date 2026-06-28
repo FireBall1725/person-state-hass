@@ -182,11 +182,18 @@ def attach_listeners(hass: HomeAssistant, entity, engine: "StateEngine") -> None
         for delay in horizons:
             runtime.timers.append(async_call_later(hass, delay, _recompute))
 
-    if engine.entities:
+    # Never watch the subject entity itself. We write to it in the cascade, so
+    # watching it would turn our own write into a state-changed event that
+    # re-triggers the cascade — a tight feedback loop that hangs HA. The
+    # subject's real changes still come through core's tracker path (the patched
+    # _update_state), so excluding it here loses nothing.
+    watched = [
+        e for e in engine.entities if e != engine.subject.subject_entity_id
+    ]
+
+    if watched:
         runtime.unsubs.append(
-            async_track_state_change_event(
-                hass, list(engine.entities), _source_changed
-            )
+            async_track_state_change_event(hass, watched, _source_changed)
         )
 
     # slow safety net so anything we failed to schedule precisely still converges
@@ -199,7 +206,7 @@ def attach_listeners(hass: HomeAssistant, entity, engine: "StateEngine") -> None
     _LOGGER.debug(
         "attached %s, watching %d source entities",
         engine.subject.subject_entity_id,
-        len(engine.entities),
+        len(watched),
     )
 
     # run once now so the composite state is correct immediately
