@@ -135,6 +135,10 @@ class PersonStatePanel extends HTMLElement {
     return `<datalist id="ps-entities">${ids.map((id) => `<option value="${esc(id)}">`).join("")}</datalist>`;
   }
 
+  _personName(s) {
+    return (s && s.live && s.live.attributes && s.live.attributes.friendly_name) || (s && s.subject) || "";
+  }
+
   _html() {
     if (!this._subjects.length) {
       return `<div class="wrap"><div class="empty">No people configured yet.<br>
@@ -142,17 +146,20 @@ class PersonStatePanel extends HTMLElement {
     }
     const cur = this._current();
     const live = cur && cur.live ? cur.live : {};
-    const tabs = this._subjects
-      .map((s) => `<button class="tab ${s.entry_id === this._selected ? "active" : ""}" data-act="select" data-id="${esc(s.entry_id)}">${esc(s.subject)}</button>`)
+    const people = this._subjects
+      .map((s) => `
+        <button class="person ${s.entry_id === this._selected ? "active" : ""}" data-act="select" data-id="${esc(s.entry_id)}">
+          <span class="pname">${esc(this._personName(s))}</span>
+          <span class="pstate">${esc((s.live && s.live.state) ?? "—")}</span>
+        </button>`)
       .join("");
-    return `
-      ${this._entityDatalist()}
-      <div class="wrap">
-        <div class="tabs">${tabs}</div>
+    const detail = cur
+      ? `
         <div class="head">
           <div class="livebox">
+            <span class="livename">${esc(this._personName(cur))}</span>
             <span class="livestate">${esc(live.state ?? "—")}</span>
-            <span class="livesub">${cur ? esc(cur.subject) : ""}${cur && !cur.loaded ? " (not loaded)" : ""}</span>
+            <span class="livesub">${esc(cur.subject)}${!cur.loaded ? " · not loaded" : ""}</span>
           </div>
           <div class="grow"></div>
           <button class="btn primary" data-act="save">Save</button>
@@ -160,7 +167,16 @@ class PersonStatePanel extends HTMLElement {
         ${this._status ? `<div class="status">${esc(this._status)}</div>` : ""}
         ${this._draft ? this._statesHtml() : ""}
         <button class="btn add-state" data-act="add-state">+ Add state</button>
-        ${this._draft ? this._awayHtml() : ""}
+        ${this._draft ? this._awayHtml() : ""}`
+      : `<div class="empty">Select a person on the left.</div>`;
+    return `
+      ${this._entityDatalist()}
+      <div class="layout">
+        <aside class="people">
+          <div class="people-title">People</div>
+          ${people}
+        </aside>
+        <main class="detail">${detail}</main>
       </div>`;
   }
 
@@ -341,12 +357,22 @@ class PersonStatePanel extends HTMLElement {
       :host { display:block; padding:16px; color:var(--primary-text-color);
         font-family:var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
       .wrap { max-width:880px; margin:0 auto; }
-      .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-      .tab { background:var(--card-background-color); color:var(--primary-text-color);
-        border:1px solid var(--divider-color); border-radius:18px; padding:6px 14px; cursor:pointer; }
-      .tab.active { background:var(--primary-color); color:var(--text-primary-color, #fff); border-color:var(--primary-color); }
+      .layout { display:flex; gap:16px; align-items:flex-start; max-width:1100px; margin:0 auto; }
+      .people { flex:0 0 240px; display:flex; flex-direction:column; gap:6px;
+        background:var(--card-background-color); border:1px solid var(--divider-color);
+        border-radius:12px; padding:10px; position:sticky; top:16px; }
+      .people-title { font-size:12px; color:var(--secondary-text-color); padding:2px 6px 6px; }
+      .person { display:flex; align-items:center; justify-content:space-between; gap:8px;
+        background:none; color:var(--primary-text-color); border:1px solid transparent;
+        border-radius:8px; padding:10px 12px; cursor:pointer; text-align:left; width:100%; }
+      .person:hover { background:var(--secondary-background-color); }
+      .person.active { background:var(--primary-color); color:var(--text-primary-color,#fff); }
+      .pname { font-weight:500; }
+      .pstate { font-size:12px; opacity:.8; text-transform:capitalize; }
+      .detail { flex:1; min-width:0; }
       .head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
       .livebox { display:flex; flex-direction:column; }
+      .livename { font-size:13px; color:var(--secondary-text-color); }
       .livestate { font-size:24px; font-weight:600; text-transform:capitalize; }
       .livesub { font-size:12px; color:var(--secondary-text-color); }
       .grow { flex:1; }
