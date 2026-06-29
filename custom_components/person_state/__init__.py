@@ -108,6 +108,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload on options change."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    """Reload on options change, via HA's machinery.
+
+    Calling async_unload_entry/async_setup_entry directly bypasses HA's
+    config-entry unload bookkeeping, so the registered async_on_unload cleanups
+    (update listener, async_at_started) never run and leak/accumulate across
+    saves. async_reload does the full teardown + setup correctly.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)
