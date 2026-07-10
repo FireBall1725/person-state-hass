@@ -36,6 +36,11 @@ _LOGGER = logging.getLogger(__name__)
 BUILT_AGAINST = "2026.6"
 
 
+@callback
+def _noop() -> None:
+    """Swallow a call. Used to suppress core's intermediate state write."""
+
+
 def _data(hass: HomeAssistant) -> "PersonStateData":
     return hass.data[DOMAIN]
 
@@ -80,19 +85,37 @@ def install_augmenter(hass: HomeAssistant) -> None:
         # capture previous *composite* state before core overwrites it; the
         # grace/persist modifiers need to know what we were.
         previous_state = getattr(self, "_attr_state", None)
-        orig_update(self)
+        # Core's _update_state writes the plain presence to the state machine
+        # itself. Left alone, every recompute emits a one-frame flap to the
+        # plain presence (e.g. "home") before our cascade overwrites it with the
+        # composite state (e.g. "dnd"). Suppress that intermediate write so we
+        # publish the state exactly once, after the cascade.
+        real_write = self.async_write_ha_state
+        self.async_write_ha_state = _noop  # type: ignore[method-assign]
+        try:
+            orig_update(self)
+        finally:
+            # remove the instance shadow so the class method is used again
+            try:
+                del self.async_write_ha_state
+            except AttributeError:  # pragma: no cover - defensive
+                self.async_write_ha_state = real_write  # type: ignore[method-assign]
         engine = _engine_for(self)
         if engine is None:
+            # unmanaged person: emit the plain presence core just computed
+            self.async_write_ha_state()
             return
+        presence = getattr(self, "_attr_state", None)  # core just set this
         # never let our layer break core's person update: on any failure the
         # entity keeps the plain presence core just wrote.
         try:
-            _apply_cascade(self, engine, previous_state)
+            _apply_cascade(self, engine, presence, previous_state)
         except Exception:  # noqa: BLE001
             _LOGGER.exception(
                 "person_state cascade failed for %s; left plain presence",
                 getattr(self, "entity_id", "?"),
             )
+            self.async_write_ha_state()
 
     async def _patched_added(self) -> None:
         await orig_added(self)
@@ -136,8 +159,16 @@ def remove_augmenter(hass: HomeAssistant) -> None:
 
 # --- cascade application ----------------------------------------------------
 @callback
-def _apply_cascade(entity, engine: "StateEngine", previous_state: str | None) -> None:
-    """Override the just-computed presence with the composite state + attrs."""
+def _apply_cascade(
+    entity, engine: "StateEngine", presence: str | None, previous_state: str | None
+) -> None:
+    """Override the plain presence with the composite state + attrs.
+
+    `presence` is the raw presence value (core's person state, before our
+    layer). On core-driven updates it is what core just computed; on our own
+    source/timer re-evaluations presence has not changed, so the caller passes
+    the last-known value it stashed in the ATTR_PRESENCE attribute.
+    """
     hass = entity.hass
 
     # Circuit breaker: if we're being re-applied in a tight burst, a feedback
@@ -153,9 +184,10 @@ def _apply_cascade(entity, engine: "StateEngine", previous_state: str | None) ->
                 engine.subject.subject_entity_id,
                 sorted(engine.entities),
             )
+        entity._attr_state = presence
+        entity.async_write_ha_state()
         return
 
-    presence = getattr(entity, "_attr_state", None)  # core just set this
     state, active = engine.evaluate(presence, previous_state)
 
     entity._attr_state = state
@@ -188,7 +220,22 @@ def attach_listeners(hass: HomeAssistant, entity, engine: "StateEngine") -> None
 
     @callback
     def _recompute(*_: object) -> None:
-        entity._update_state()
+        # A source-entity change or a timer tick: presence has NOT changed, so
+        # re-run only our cascade. Do not call core's _update_state — it would
+        # recompute and re-publish the plain presence, flapping the state to
+        # "home" for one frame before our cascade overwrites it. Reuse the last
+        # presence we stashed; fall back to the current state on first attach,
+        # before any cascade has run (state is still plain presence then).
+        attrs = getattr(entity, "_attr_extra_state_attributes", None) or {}
+        presence = attrs.get(ATTR_PRESENCE, getattr(entity, "_attr_state", None))
+        previous_state = getattr(entity, "_attr_state", None)
+        try:
+            _apply_cascade(entity, engine, presence, previous_state)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception(
+                "person_state re-eval failed for %s",
+                getattr(entity, "entity_id", "?"),
+            )
 
     @callback
     def _source_changed(event: Event) -> None:
