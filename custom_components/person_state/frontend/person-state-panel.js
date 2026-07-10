@@ -99,6 +99,7 @@ class PersonStatePanel extends HTMLElement {
     this._selected = null;
     this._draft = null; // { away_from, away_state, states: [editorState] }
     this._status = "";
+    this._debug = false;
   }
 
   set hass(hass) {
@@ -106,7 +107,19 @@ class PersonStatePanel extends HTMLElement {
     if (!this._loaded) {
       this._loaded = true;
       this._load();
+      return;
     }
+    // With debug on, keep the live values fresh as hass updates — but never
+    // re-render while the user is typing in a field (it would drop focus).
+    if (this._debug) {
+      const ae = this.shadowRoot.activeElement;
+      if (!ae || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.render();
+    }
+  }
+
+  _liveSubject() {
+    const cur = this._current();
+    return cur && this._hass ? this._hass.states[cur.subject] : null;
   }
 
   async _load() {
@@ -217,11 +230,12 @@ class PersonStatePanel extends HTMLElement {
             <span class="livesub">${esc(cur.subject)}${!cur.loaded ? " · not loaded" : ""}</span>
           </div>
           <div class="grow"></div>
+          <button class="btn ghost ${this._debug ? "on" : ""}" data-act="toggle-debug" title="Show each condition's live value and whether it currently passes, plus the engine's verdict for each state">${this._debug ? "● Debugging" : "Debug"}</button>
           <button class="btn primary" data-act="save" title="Validate and save all states for this person">Save</button>
         </div>
         <p class="lede">States are checked <b>top to bottom</b>. The first one whose rules match becomes the person's state; if none match, the presence fallback at the bottom is used.</p>
         ${this._status ? `<div class="status">${esc(this._status)}</div>` : ""}
-        ${this._draft ? this._statesHtml(live) : ""}
+        ${this._draft ? this._statesHtml(this._liveSubject() || { state: live.state, attributes: live.attributes || {} }) : ""}
         <button class="btn add-state" data-act="add-state" title="Add another composite state below the current ones">+ Add state</button>
         ${this._draft ? this._awayHtml() : ""}`
       : `<div class="empty">Select a person on the left.</div>`;
@@ -277,6 +291,63 @@ class PersonStatePanel extends HTMLElement {
         ${st.mode === "builder" && st.builder.sources.length ? `<div class="summary" title="Plain-language reading of the rule above">→ ${esc(builderText(st.builder))}</div>` : ""}
 
         ${this._holdHtml(st, i)}
+        ${this._debug ? this._debugBlock(st, live) : ""}
+      </div>`;
+  }
+
+  // ---- live debug ---------------------------------------------------------
+  _evalRow(src) {
+    const s = this._hass && this._hass.states ? this._hass.states[src.entity_id] : null;
+    if (!src.entity_id) return { value: "—", pass: false, missing: true };
+    if (!s) return { value: "unavailable", pass: false, missing: true };
+    const val = s.state;
+    let pass;
+    if (src.kind === KIND_NUMERIC) {
+      const n = parseFloat(val);
+      pass = !isNaN(n) && (src.above == null || n > src.above) && (src.below == null || n < src.below);
+    } else {
+      const inSet = (src.states || []).includes(val);
+      pass = src.negate ? !inSet : inSet;
+    }
+    let pending = null;
+    if (pass && src.for_seconds) {
+      const held = (Date.now() - new Date(s.last_changed).getTime()) / 1000;
+      if (held < src.for_seconds) { pass = false; pending = Math.ceil(src.for_seconds - held); }
+    }
+    return { value: val, pass, pending };
+  }
+
+  _dbgChips(builder) {
+    if (!builder.sources.length) return `<span class="dbg-note">no conditions</span>`;
+    return builder.sources.map((src) => {
+      const r = this._evalRow(src);
+      const short = src.entity_id ? (src.entity_id.split(".").slice(1).join(".") || src.entity_id) : "—";
+      const cls = r.missing ? "unk" : r.pass ? "ok" : "no";
+      const mark = r.missing ? "?" : r.pass ? "✓" : "✗";
+      const wait = r.pending != null ? ` · ${r.pending}s left` : "";
+      return `<span class="chip ${cls}" title="${esc(src.entity_id || "no entity")}">${esc(short)} = ${esc(String(r.value))}${wait} ${mark}</span>`;
+    }).join("");
+  }
+
+  _debugBlock(st, live) {
+    const attrs = (live && live.attributes) || {};
+    const engine = attrs[st.name];
+    const verdict = engine === true ? "active" : engine === false ? "inactive" : "unknown";
+    const enter = st.mode === "builder"
+      ? this._dbgChips(st.builder)
+      : `<span class="dbg-note">YAML mode — per-row values not shown; see engine verdict</span>`;
+    const hold = st.hold && st.hold.mode === "builder"
+      ? `<div class="dbg-line"><span class="dbg-k" title="Only latches once the state is already active">hold</span>${this._dbgChips(st.hold.builder)}</div>`
+      : "";
+    return `
+      <div class="dbg">
+        <div class="dbg-line">
+          <span class="dbg-k">engine</span>
+          <span class="chip ${engine ? "ok" : "no"}">${esc(st.name || "state")} = ${verdict}</span>
+          <span class="dbg-note">person is <b>${esc((live && live.state) || "—")}</b></span>
+        </div>
+        <div class="dbg-line"><span class="dbg-k">enter</span>${enter}</div>
+        ${hold}
       </div>`;
   }
 
@@ -373,6 +444,7 @@ class PersonStatePanel extends HTMLElement {
     switch (act) {
       case "select": this._selected = el.dataset.id; this._status = ""; this._loadDraft(); this.render(); break;
       case "save": this._save(); break;
+      case "toggle-debug": this._debug = !this._debug; this.render(); break;
       case "add-state": this._addState(); break;
       case "del-state": this._delState(si); break;
       case "up": this._moveState(si, -1); break;
@@ -503,6 +575,19 @@ class PersonStatePanel extends HTMLElement {
       .btn:hover { border-color:var(--primary-color); }
       .btn.primary { background:var(--primary-color); color:var(--text-primary-color,#fff); border-color:var(--primary-color); }
       .btn.small { align-self:flex-start; padding:5px 11px; font-size:12px; }
+      .btn.ghost { padding:6px 12px; font-size:12px; }
+      .btn.ghost.on { background:color-mix(in srgb, var(--primary-color) 18%, transparent); border-color:var(--primary-color); color:var(--primary-text-color); }
+      .dbg { margin-top:12px; background:var(--secondary-background-color); border:1px solid var(--divider-color);
+        border-radius:10px; padding:9px 11px; display:flex; flex-direction:column; gap:7px; }
+      .dbg-line { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+      .dbg-k { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--secondary-text-color);
+        min-width:44px; font-weight:600; }
+      .dbg-note { font-size:12px; color:var(--secondary-text-color); }
+      .chip { font-size:11.5px; font-family:ui-monospace,Menlo,monospace; padding:2px 8px; border-radius:6px;
+        border:1px solid transparent; white-space:nowrap; }
+      .chip.ok { color:var(--success-color); background:color-mix(in srgb, var(--success-color) 13%, transparent); }
+      .chip.no { color:var(--error-color); background:color-mix(in srgb, var(--error-color) 13%, transparent); }
+      .chip.unk { color:var(--secondary-text-color); background:var(--card-background-color); border-color:var(--divider-color); }
       .btn.add-state { width:100%; margin-bottom:14px; border-style:dashed; }
       .hint { font-size:11.5px; color:var(--secondary-text-color); padding:4px 2px; }
       .empty { text-align:center; color:var(--secondary-text-color); margin-top:40px; line-height:1.7; }
