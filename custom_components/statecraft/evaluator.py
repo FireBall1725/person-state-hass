@@ -127,7 +127,9 @@ class StateEngine:
             self._instant_checkers[state_def.name] = await self._compile_quiet(
                 _strip_for(state_def.condition)
             )
-            self._state_entities[state_def.name] = self._extract(state_def.condition)
+            # Entities of both enter AND hold: a dropout of any of them should
+            # not drop an active state (see _settling).
+            entities = self._extract(state_def.condition)
             horizons = collect_for_horizons(state_def.condition)
             self._enter_horizon[state_def.name] = max(horizons) if horizons else 0.0
             self.for_targets.extend(collect_for_targets(state_def.condition))
@@ -136,6 +138,8 @@ class StateEngine:
                     state_def.name, "hold", state_def.hold
                 )
                 self.for_targets.extend(collect_for_targets(state_def.hold))
+                entities |= self._extract(state_def.hold)
+            self._state_entities[state_def.name] = entities
 
     async def _compile_quiet(self, cfg: dict[str, Any]) -> Any:
         """Build a checker without folding entities/horizons (used for twins)."""
@@ -247,16 +251,18 @@ class StateEngine:
         checker = self._instant_checkers.get(name) if bridging else self._checkers.get(name)
         if _run_checker(checker, self.hass):
             return True
-        # Still bridging and a referenced sensor hasn't come back yet: keep the
-        # restored state rather than drop it, until the sensor reports again.
-        if bridging and previous_state == name and self._settling(name):
+        # Everything below only keeps a state we were already in.
+        if previous_state != name:
+            return False
+        # A referenced sensor is unavailable/unknown: a dropout is not a change,
+        # so keep the state until the sensor reports again rather than dropping
+        # it on missing data. Handles flaky sensors and the reboot boot window.
+        if self._settling(name):
             return True
-        # Latch: we were already in this state and the hold condition keeps it
-        # active even though the enter condition has gone false.
-        if (
-            state_def.hold is not None
-            and previous_state == name
-            and _run_checker(self._hold_checkers.get(name), self.hass)
+        # Latch: the hold condition keeps it active even though the enter
+        # condition has gone false.
+        if state_def.hold is not None and _run_checker(
+            self._hold_checkers.get(name), self.hass
         ):
             return True
         return False
