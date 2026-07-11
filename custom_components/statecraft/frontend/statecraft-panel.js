@@ -798,9 +798,9 @@ class StatecraftPanel extends HTMLElement {
         color:var(--primary-text-color);
         font-family:var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
       * { box-sizing:border-box; }
-      .topbar { display:flex; align-items:center; gap:10px; margin:-16px -16px 14px; padding:8px 12px;
-        border-bottom:1px solid var(--divider-color); background:var(--card-background-color);
-        position:sticky; top:0; z-index:3; }
+      .topbar { display:flex; align-items:center; gap:10px; margin:0 0 16px; padding:10px 12px;
+        border:1px solid var(--divider-color); background:var(--card-background-color);
+        border-radius:12px; position:sticky; top:8px; z-index:3; }
       .menu-btn { background:none; border:none; color:var(--primary-text-color); font-size:22px; line-height:1;
         cursor:pointer; padding:4px 8px; border-radius:8px; }
       .menu-btn:hover { background:var(--secondary-background-color); }
