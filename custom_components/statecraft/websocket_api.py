@@ -19,7 +19,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import condition
 
-from .condition_builder import compile_condition
+from .condition_builder import compile_condition, decompile_condition
 from .const import (
     CONF_AWAY_FROM,
     CONF_AWAY_STATE,
@@ -55,6 +55,8 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_list)
     websocket_api.async_register_command(hass, ws_people)
     websocket_api.async_register_command(hass, ws_save)
+    websocket_api.async_register_command(hass, ws_to_yaml)
+    websocket_api.async_register_command(hass, ws_from_yaml)
 
 
 def _live(hass: HomeAssistant, subject_entity_id: str) -> dict[str, Any]:
@@ -109,6 +111,71 @@ def ws_people(
     ]
     people.sort(key=lambda p: p["name"])
     connection.send_result(msg["id"], {"people": people})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "statecraft/to_yaml",
+        vol.Required("combine"): str,
+        vol.Required("sources"): [dict],
+    }
+)
+@websocket_api.async_response
+async def ws_to_yaml(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Compile a builder tree to native HA condition YAML (validated)."""
+    cfg = compile_condition(msg["combine"], msg["sources"])
+    if not cfg:
+        connection.send_result(msg["id"], {"yaml": ""})
+        return
+    try:
+        await condition.async_validate_condition_config(hass, cfg)
+    except Exception as err:  # noqa: BLE001
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    text = yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False).strip()
+    connection.send_result(msg["id"], {"yaml": text})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "statecraft/from_yaml", vol.Required("yaml"): str}
+)
+@websocket_api.async_response
+async def ws_from_yaml(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Parse HA condition YAML into a builder tree, if representable.
+
+    Returns representable=False (not an error) for a valid condition the builder
+    can't draw as rows (template, sun, zone, ...), so the panel keeps YAML mode.
+    """
+    try:
+        cfg = yaml.safe_load(msg["yaml"] or "")
+    except yaml.YAMLError as err:
+        connection.send_error(msg["id"], "invalid_yaml", str(err))
+        return
+    if not cfg:
+        connection.send_result(
+            msg["id"], {"builder": {"combine": "or", "sources": []}, "representable": True}
+        )
+        return
+    # Decompile from the plain parsed form (validation may coerce for:/entity_id
+    # into objects that don't map back cleanly).
+    builder = decompile_condition(cfg)
+    try:
+        await condition.async_validate_condition_config(hass, cfg)
+    except Exception as err:  # noqa: BLE001
+        connection.send_error(msg["id"], "invalid_condition", str(err))
+        return
+    if builder is None:
+        connection.send_result(msg["id"], {"representable": False})
+        return
+    connection.send_result(msg["id"], {"builder": builder, "representable": True})
 
 
 def _compile_block(payload: dict[str, Any], label: str) -> tuple[Any, Any]:
