@@ -263,6 +263,18 @@ class StatecraftPanel extends HTMLElement {
     return (s && s.live && s.live.attributes && s.live.attributes.friendly_name) || (s && s.subject) || "";
   }
 
+  _scopeIcon(s) {
+    // Person scopes: the person's avatar if it has one, else a person glyph.
+    // Custom scopes: the icon chosen at creation, else the default state glyph.
+    if ((s.scope_type || "person") === "person") {
+      const live = this._hass && this._hass.states ? this._hass.states[s.subject] : null;
+      const pic = live && live.attributes ? live.attributes.entity_picture : null;
+      if (pic) return `<img class="pic" src="${esc(pic)}" alt="">`;
+      return `<ha-icon class="sic" icon="mdi:account"></ha-icon>`;
+    }
+    return `<ha-icon class="sic" icon="${esc(s.icon || "mdi:state-machine")}"></ha-icon>`;
+  }
+
   _html() {
     if (!this._subjects.length) {
       return `<div class="wrap"><div class="empty">No people configured yet.<br>
@@ -274,6 +286,7 @@ class StatecraftPanel extends HTMLElement {
     const people = this._subjects
       .map((s) => `
         <button class="person ${s.entry_id === this._selected ? "active" : ""}" data-act="select" data-id="${esc(s.entry_id)}" title="${esc(s.subject || "")}">
+          ${this._scopeIcon(s)}
           <span class="pname">${esc(this._personName(s))}</span>
           <span class="pstate">${esc(this._liveState(s.subject) ?? (s.live && s.live.state) ?? "—")}</span>
         </button>`)
@@ -580,13 +593,15 @@ class StatecraftPanel extends HTMLElement {
         border-radius:12px; padding:10px; position:sticky; top:16px; }
       .people-title { font-size:12px; letter-spacing:.04em; text-transform:uppercase;
         color:var(--secondary-text-color); padding:2px 6px 6px; }
-      .person { display:flex; align-items:center; justify-content:space-between; gap:8px;
+      .person { display:flex; align-items:center; gap:10px;
         background:none; color:var(--primary-text-color); border:1px solid transparent;
-        border-radius:8px; padding:10px 12px; cursor:pointer; text-align:left; width:100%; }
+        border-radius:8px; padding:9px 12px; cursor:pointer; text-align:left; width:100%; }
       .person:hover { background:var(--secondary-background-color); }
       .person.active { background:var(--primary-color); color:var(--text-primary-color,#fff); }
-      .pname { font-weight:500; }
-      .pstate { font-size:12px; opacity:.85; text-transform:capitalize; }
+      .person .pic { width:24px; height:24px; border-radius:50%; object-fit:cover; flex:none; }
+      .person .sic { --mdc-icon-size:22px; width:24px; height:24px; color:inherit; flex:none; opacity:.9; }
+      .pname { font-weight:500; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .pstate { font-size:12px; opacity:.85; text-transform:capitalize; flex:none; }
       .detail { flex:1; min-width:0; }
       .head { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
       .livebox { display:flex; flex-direction:column; }
