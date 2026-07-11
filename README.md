@@ -1,10 +1,10 @@
 # Statecraft
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![Hassfest](https://github.com/fireball1725/person-state-hass/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/fireball1725/person-state-hass/actions/workflows/hassfest.yaml)
-[![HACS](https://github.com/fireball1725/person-state-hass/actions/workflows/hacs.yaml/badge.svg)](https://github.com/fireball1725/person-state-hass/actions/workflows/hacs.yaml)
+[![Hassfest](https://github.com/fireball1725/statecraft-hass/actions/workflows/hassfest.yaml/badge.svg)](https://github.com/fireball1725/statecraft-hass/actions/workflows/hassfest.yaml)
+[![HACS](https://github.com/fireball1725/statecraft-hass/actions/workflows/hacs.yaml/badge.svg)](https://github.com/fireball1725/statecraft-hass/actions/workflows/hacs.yaml)
 
-[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=fireball1725&repository=person-state-hass&category=integration)
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=fireball1725&repository=statecraft-hass&category=integration)
 
 Statecraft turns a set of conditions into a single named state. You define states like `sleep`, `dnd`, `party`, or `night`, order them by priority, and the first one whose conditions match becomes the current state. Everything is authored from a sidebar panel.
 
@@ -20,7 +20,7 @@ Both kinds share one condition engine, one editor, and one debug view.
 ## Install (HACS custom repository)
 
 1. HACS, three-dot menu, Custom repositories.
-2. Add `https://github.com/fireball1725/person-state-hass` as an Integration.
+2. Add `https://github.com/fireball1725/statecraft-hass` as an Integration.
 3. Install **Statecraft**, then restart Home Assistant.
 4. Settings, Devices and Services, Add Integration, **Statecraft**. Pick Person or Custom.
 
