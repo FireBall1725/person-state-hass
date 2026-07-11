@@ -14,9 +14,10 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import condition
+import homeassistant.util.dt as dt_util
 
 from .core import pick_state
-from .models import SubjectConfig, collect_for_horizons
+from .models import SubjectConfig, collect_for_horizons, collect_for_targets
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,6 +79,8 @@ class StateEngine:
         self.entities: set[str] = set()
         # `for:` / grace durations to schedule precise re-evaluations
         self.for_horizons: list[float] = []
+        # (entity_id, for_seconds) for every `for:` condition, enter + hold
+        self.for_targets: list[tuple[str, float]] = []
         # reboot bridge: which restored state, and until when (monotonic)
         self._bridge_state: str | None = None
         self._bridge_until: float = 0.0
@@ -112,6 +115,7 @@ class StateEngine:
         self._enter_horizon.clear()
         self.entities.clear()
         self.for_horizons.clear()
+        self.for_targets.clear()
 
         for state_def in self.subject.states:
             self._checkers[state_def.name] = await self._compile(
@@ -124,10 +128,12 @@ class StateEngine:
             self._state_entities[state_def.name] = self._extract(state_def.condition)
             horizons = collect_for_horizons(state_def.condition)
             self._enter_horizon[state_def.name] = max(horizons) if horizons else 0.0
+            self.for_targets.extend(collect_for_targets(state_def.condition))
             if state_def.hold is not None:
                 self._hold_checkers[state_def.name] = await self._compile(
                     state_def.name, "hold", state_def.hold
                 )
+                self.for_targets.extend(collect_for_targets(state_def.hold))
 
     async def _compile_quiet(self, cfg: dict[str, Any]) -> Any:
         """Build a checker without folding entities/horizons (used for twins)."""
@@ -166,6 +172,24 @@ class StateEngine:
 
         self.for_horizons.extend(collect_for_horizons(cfg))
         return checker
+
+    def pending_for_delays(self) -> list[float]:
+        """Seconds until each in-progress `for:` boundary elapses.
+
+        Computed from the entity's real last_changed, so an unrelated
+        state-changed event (a chatty sensor's attribute update) reschedules to
+        the *same* absolute moment instead of pushing the boundary forward.
+        """
+        now = dt_util.utcnow()
+        delays: list[float] = []
+        for entity_id, secs in self.for_targets:
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            remaining = secs - (now - state.last_changed).total_seconds()
+            if remaining > 0:
+                delays.append(remaining + 0.5)  # a hair past the boundary
+        return delays
 
     def begin_bridge(self, restored_state: str | None) -> None:
         """Start the reboot bridge for a restored state.

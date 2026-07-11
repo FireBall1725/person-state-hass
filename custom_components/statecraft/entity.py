@@ -95,25 +95,12 @@ class StatecraftScope(RestoreEntity):
 
     # --- listeners ----------------------------------------------------------
     def _attach(self) -> None:
-        horizons = sorted({round(h) + 1 for h in self._engine.for_horizons if h > 0})
         # Never watch ourselves: we write our own state, and watching it would
         # turn that write into a change event that re-triggers evaluation.
         watched = [e for e in self._engine.entities if e != self.entity_id]
-
-        @callback
-        def _changed(*_: object) -> None:
-            self._recompute()
-            for cancel in self._timers:
-                cancel()
-            self._timers.clear()
-            for delay in horizons:
-                self._timers.append(
-                    async_call_later(self.hass, delay, self._recompute)
-                )
-
         if watched:
             self._unsubs.append(
-                async_track_state_change_event(self.hass, watched, _changed)
+                async_track_state_change_event(self.hass, watched, self._recompute)
             )
         # slow safety net so anything not scheduled precisely still converges
         self._unsubs.append(
@@ -121,6 +108,16 @@ class StatecraftScope(RestoreEntity):
                 self.hass, self._recompute, timedelta(seconds=SAFETY_REEVAL_SECONDS)
             )
         )
+
+    def _reschedule(self) -> None:
+        # Re-arm `for:` boundary timers from each entity's real last_changed, so
+        # an unrelated update reschedules to the same absolute moment rather than
+        # pushing the boundary forward.
+        for cancel in self._timers:
+            cancel()
+        self._timers.clear()
+        for delay in self._engine.pending_for_delays():
+            self._timers.append(async_call_later(self.hass, delay, self._recompute))
 
     def _detach(self) -> None:
         for unsub in self._unsubs:
@@ -133,13 +130,13 @@ class StatecraftScope(RestoreEntity):
     # --- evaluation ---------------------------------------------------------
     @callback
     def _recompute(self, *_: object) -> None:
-        if not self._engine.allow_apply():
-            return
-        # No presence for a custom scope; pick_state falls back to default_state.
-        state, active = self._engine.evaluate(None, self._state)
-        self._state = state
-        attrs: dict[str, Any] = dict(active)
-        attrs["options"] = self._options()
-        self._attrs = attrs
-        if self.hass is not None:
-            self.async_write_ha_state()
+        if self._engine.allow_apply():
+            # No presence for a custom scope; pick_state falls back to default.
+            state, active = self._engine.evaluate(None, self._state)
+            self._state = state
+            attrs: dict[str, Any] = dict(active)
+            attrs["options"] = self._options()
+            self._attrs = attrs
+            if self.hass is not None:
+                self.async_write_ha_state()
+        self._reschedule()

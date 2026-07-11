@@ -216,8 +216,6 @@ def attach_listeners(hass: HomeAssistant, entity, engine: "StateEngine") -> None
     )
     runtime.detach()
 
-    horizons = sorted({round(h) + 1 for h in engine.for_horizons if h > 0})
-
     @callback
     def _recompute(*_: object) -> None:
         # Re-evaluate through core's _update_state. Core recomputes the true
@@ -228,13 +226,12 @@ def attach_listeners(hass: HomeAssistant, entity, engine: "StateEngine") -> None
         # the person into it permanently. Core's intermediate write is
         # suppressed in _patched_update, so this no longer flaps.
         entity._update_state()
-
-    @callback
-    def _source_changed(event: Event) -> None:
-        _recompute()
-        # re-evaluate again when each `for:` / grace window is due to elapse
+        # Re-arm `for:` boundary timers from the real last_changed of each
+        # watched entity. Doing this every recompute (not just on a source
+        # change) means an unrelated update reschedules to the same absolute
+        # boundary instead of pushing it out, so a `for:` fires on time.
         runtime.cancel_timers()
-        for delay in horizons:
+        for delay in engine.pending_for_delays():
             runtime.timers.append(async_call_later(hass, delay, _recompute))
 
     # Never watch the subject entity itself. We write to it in the cascade, so
@@ -248,7 +245,7 @@ def attach_listeners(hass: HomeAssistant, entity, engine: "StateEngine") -> None
 
     if watched:
         runtime.unsubs.append(
-            async_track_state_change_event(hass, watched, _source_changed)
+            async_track_state_change_event(hass, watched, _recompute)
         )
 
     # slow safety net so anything we failed to schedule precisely still converges

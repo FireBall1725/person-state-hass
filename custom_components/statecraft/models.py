@@ -203,6 +203,35 @@ def collect_for_horizons(config: Any) -> list[float]:
     return horizons
 
 
+def collect_for_targets(config: Any) -> list[tuple[str, float]]:
+    """Collect (entity_id, for_seconds) for every condition that has a `for:`.
+
+    Lets the engine schedule a re-evaluation at the *actual* boundary
+    (entity.last_changed + for), which is stable against unrelated state-changed
+    events that would otherwise keep pushing a "now + for" timer forward.
+    """
+    targets: list[tuple[str, float]] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if "for" in node and "entity_id" in node:
+                secs = _to_seconds(node["for"])
+                if secs:
+                    eids = node["entity_id"]
+                    if isinstance(eids, str):
+                        eids = [eids]
+                    for eid in eids:
+                        targets.append((eid, secs))
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                _walk(item)
+
+    _walk(config)
+    return targets
+
+
 def _to_seconds(value: Any) -> float | None:
     if isinstance(value, timedelta):
         return value.total_seconds()
