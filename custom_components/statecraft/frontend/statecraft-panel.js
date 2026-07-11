@@ -307,9 +307,18 @@ class StatecraftPanel extends HTMLElement {
     return `<ha-icon class="sic" icon="${esc(s.icon || "mdi:state-machine")}"></ha-icon>`;
   }
 
+  _topbar() {
+    // A custom panel gets no HA toolbar, so render our own header with a menu
+    // button; on mobile it's the only way back to the sidebar.
+    return `<div class="topbar">
+      <button class="menu-btn" data-act="menu" title="Open menu">☰</button>
+      <span class="topbar-title">Statecraft</span>
+    </div>`;
+  }
+
   _html() {
     if (!this._subjects.length) {
-      return `<div class="wrap"><div class="empty">No people configured yet.<br>
+      return `${this._topbar()}<div class="wrap"><div class="empty">No people configured yet.<br>
         Add one via <b>Settings → Devices &amp; Services → Statecraft → Add</b>, then return here.</div></div>`;
     }
     const cur = this._current();
@@ -342,6 +351,7 @@ class StatecraftPanel extends HTMLElement {
         ${this._draft ? this._awayHtml() : ""}`
       : `<div class="empty">Select a person on the left.</div>`;
     return `
+      ${this._topbar()}
       ${this._entityDatalist()}
       <div class="layout">
         <aside class="people">
@@ -672,6 +682,7 @@ class StatecraftPanel extends HTMLElement {
     const scope = el.dataset.scope || "cond";
     const path = el.dataset.path;
     switch (act) {
+      case "menu": this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true })); break;
       case "select": this._selected = el.dataset.id; this._status = ""; this._loadDraft(); this.render(); break;
       case "save": this._save(); break;
       case "toggle-debug":
@@ -787,6 +798,13 @@ class StatecraftPanel extends HTMLElement {
         color:var(--primary-text-color);
         font-family:var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
       * { box-sizing:border-box; }
+      .topbar { display:flex; align-items:center; gap:10px; margin:-16px -16px 14px; padding:8px 12px;
+        border-bottom:1px solid var(--divider-color); background:var(--card-background-color);
+        position:sticky; top:0; z-index:3; }
+      .menu-btn { background:none; border:none; color:var(--primary-text-color); font-size:22px; line-height:1;
+        cursor:pointer; padding:4px 8px; border-radius:8px; }
+      .menu-btn:hover { background:var(--secondary-background-color); }
+      .topbar-title { font-size:16px; font-weight:600; }
       .wrap { max-width:880px; margin:0 auto; }
       .layout { display:flex; gap:16px; align-items:flex-start; max-width:1120px; margin:0 auto; }
       .people { flex:0 0 240px; display:flex; flex-direction:column; gap:6px;
