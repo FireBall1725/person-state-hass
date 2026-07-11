@@ -26,6 +26,25 @@ _LOGGER = logging.getLogger(__name__)
 _BREAKER_MAX = 25
 _BREAKER_WINDOW = 2.0  # seconds
 
+# After a restart, HA resets many sensors' last_changed to boot time, so a
+# `for:` in an enter condition is false for its whole duration even if the
+# sensor held that value across the reboot. To bridge that gap we restore the
+# last composite state and, for a short window, evaluate its enter condition
+# with `for:` stripped (see begin_bridge). The buffer keeps the window open a
+# little past the `for:` horizon so HA's own timing has caught up before we
+# hand back to normal evaluation.
+_BRIDGE_BUFFER = 30.0  # seconds
+_UNAVAILABLE = ("unavailable", "unknown")
+
+
+def _strip_for(cfg: Any) -> Any:
+    """Deep copy of a condition config with every `for:` removed."""
+    if isinstance(cfg, dict):
+        return {k: _strip_for(v) for k, v in cfg.items() if k != "for"}
+    if isinstance(cfg, list):
+        return [_strip_for(v) for v in cfg]
+    return cfg
+
 
 def _run_checker(checker: Any, hass: HomeAssistant) -> bool:
     """Evaluate a condition checker, tolerant of None / version differences."""
@@ -47,12 +66,21 @@ class StateEngine:
         self.hass = hass
         self.subject = subject
         self._checkers: dict[str, Any] = {}
+        # for-less copy of each enter checker, used only to bridge a reboot
+        self._instant_checkers: dict[str, Any] = {}
         # one optional "stay latched while true" checker per state
         self._hold_checkers: dict[str, Any] = {}
+        # entities each state's enter condition references (for the settle hold)
+        self._state_entities: dict[str, set[str]] = {}
+        # longest `for:` in each state's enter condition (bridge window length)
+        self._enter_horizon: dict[str, float] = {}
         # entities to subscribe to so we re-evaluate on change
         self.entities: set[str] = set()
         # `for:` / grace durations to schedule precise re-evaluations
         self.for_horizons: list[float] = []
+        # reboot bridge: which restored state, and until when (monotonic)
+        self._bridge_state: str | None = None
+        self._bridge_until: float = 0.0
         # circuit breaker state (see allow_apply)
         self._apply_times: deque[float] = deque()
         self.tripped: bool = False
@@ -78,7 +106,10 @@ class StateEngine:
     async def async_build(self) -> None:
         """Compile condition checkers and collect what to watch."""
         self._checkers.clear()
+        self._instant_checkers.clear()
         self._hold_checkers.clear()
+        self._state_entities.clear()
+        self._enter_horizon.clear()
         self.entities.clear()
         self.for_horizons.clear()
 
@@ -86,10 +117,30 @@ class StateEngine:
             self._checkers[state_def.name] = await self._compile(
                 state_def.name, "condition", state_def.condition
             )
+            # for-less twin of the enter checker, for reboot bridging
+            self._instant_checkers[state_def.name] = await self._compile_quiet(
+                _strip_for(state_def.condition)
+            )
+            self._state_entities[state_def.name] = self._extract(state_def.condition)
+            horizons = collect_for_horizons(state_def.condition)
+            self._enter_horizon[state_def.name] = max(horizons) if horizons else 0.0
             if state_def.hold is not None:
                 self._hold_checkers[state_def.name] = await self._compile(
                     state_def.name, "hold", state_def.hold
                 )
+
+    async def _compile_quiet(self, cfg: dict[str, Any]) -> Any:
+        """Build a checker without folding entities/horizons (used for twins)."""
+        try:
+            return await condition.async_from_config(self.hass, cfg)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _extract(self, cfg: dict[str, Any]) -> set[str]:
+        try:
+            return set(condition.async_extract_entities(cfg))
+        except Exception:  # noqa: BLE001
+            return set()
 
     async def _compile(self, name: str, kind: str, cfg: dict[str, Any]) -> Any:
         """Build one condition checker; fold its entities + `for:` horizons in.
@@ -116,6 +167,33 @@ class StateEngine:
         self.for_horizons.extend(collect_for_horizons(cfg))
         return checker
 
+    def begin_bridge(self, restored_state: str | None) -> None:
+        """Start the reboot bridge for a restored state.
+
+        For the length of that state's `for:` horizon (plus a buffer), its enter
+        condition is evaluated with `for:` stripped, so a state that held across
+        a reboot re-enters at once instead of waiting out the timer again. A
+        state with no `for:` needs no bridge (it re-enters immediately anyway).
+        """
+        if not restored_state:
+            return
+        horizon = self._enter_horizon.get(restored_state, 0.0)
+        if horizon <= 0:
+            return
+        self._bridge_state = restored_state
+        self._bridge_until = time.monotonic() + horizon + _BRIDGE_BUFFER
+
+    def _bridging(self, name: str) -> bool:
+        return name == self._bridge_state and time.monotonic() < self._bridge_until
+
+    def _settling(self, name: str) -> bool:
+        """True while any entity the state references is still unavailable."""
+        for entity_id in self._state_entities.get(name, ()):
+            state = self.hass.states.get(entity_id)
+            if state is None or state.state in _UNAVAILABLE:
+                return True
+        return False
+
     @callback
     def evaluate(
         self, presence: str | None, previous_state: str | None
@@ -135,15 +213,24 @@ class StateEngine:
 
     @callback
     def _state_on(self, state_def, previous_state: str | None) -> bool:
-        # Enter: the condition is true right now.
-        if _run_checker(self._checkers.get(state_def.name), self.hass):
+        name = state_def.name
+        bridging = self._bridging(name)
+        # Enter: the condition is true right now. During the reboot bridge, use
+        # the for-less twin so a state that held across the reboot re-enters
+        # without waiting out its `for:` again.
+        checker = self._instant_checkers.get(name) if bridging else self._checkers.get(name)
+        if _run_checker(checker, self.hass):
+            return True
+        # Still bridging and a referenced sensor hasn't come back yet: keep the
+        # restored state rather than drop it, until the sensor reports again.
+        if bridging and previous_state == name and self._settling(name):
             return True
         # Latch: we were already in this state and the hold condition keeps it
         # active even though the enter condition has gone false.
         if (
             state_def.hold is not None
-            and previous_state == state_def.name
-            and _run_checker(self._hold_checkers.get(state_def.name), self.hass)
+            and previous_state == name
+            and _run_checker(self._hold_checkers.get(name), self.hass)
         ):
             return True
         return False

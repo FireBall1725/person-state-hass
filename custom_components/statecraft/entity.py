@@ -82,8 +82,11 @@ class StatecraftScope(RestoreEntity):
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
+        restored = None
         if last is not None and last.state not in (None, "unknown", "unavailable"):
             self._state = last.state  # so the first eval sees what we were
+            restored = last.state
+        self._engine.begin_bridge(restored)  # bridge for: across a reboot
         self._attach()
         self._recompute()
 

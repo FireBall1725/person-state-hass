@@ -100,6 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             restored = data.last_state.get(subject.subject_entity_id)
             if restored is not None:
                 entity._attr_state = restored  # so first eval sees what we were
+            engine.begin_bridge(restored)  # bridge for: across a reboot
             attach_listeners(hass, entity, engine)
 
         entry.async_on_unload(async_at_started(hass, _attach))
