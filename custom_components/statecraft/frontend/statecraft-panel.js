@@ -101,6 +101,32 @@ class StatecraftPanel extends HTMLElement {
     this._status = "";
     this._debug = false;
     this._lastSig = "";
+    this._debugTimer = null;
+  }
+
+  connectedCallback() {
+    if (this._debug) this._startDebugTimer();
+  }
+
+  disconnectedCallback() {
+    this._stopDebugTimer();
+  }
+
+  // While debug is on, tick once a second so `for:` countdowns decrement even
+  // when no state has changed. Skip the repaint while a field is focused.
+  _startDebugTimer() {
+    if (this._debugTimer) return;
+    this._debugTimer = setInterval(() => {
+      const ae = this.shadowRoot.activeElement;
+      if (!ae || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.render();
+    }, 1000);
+  }
+
+  _stopDebugTimer() {
+    if (this._debugTimer) {
+      clearInterval(this._debugTimer);
+      this._debugTimer = null;
+    }
   }
 
   set hass(hass) {
@@ -485,7 +511,10 @@ class StatecraftPanel extends HTMLElement {
     switch (act) {
       case "select": this._selected = el.dataset.id; this._status = ""; this._loadDraft(); this.render(); break;
       case "save": this._save(); break;
-      case "toggle-debug": this._debug = !this._debug; this.render(); break;
+      case "toggle-debug":
+        this._debug = !this._debug;
+        if (this._debug) this._startDebugTimer(); else this._stopDebugTimer();
+        this.render(); break;
       case "add-state": this._addState(); break;
       case "del-state": this._delState(si); break;
       case "up": this._moveState(si, -1); break;
