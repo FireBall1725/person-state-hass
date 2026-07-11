@@ -100,6 +100,7 @@ class PersonStatePanel extends HTMLElement {
     this._draft = null; // { away_from, away_state, states: [editorState] }
     this._status = "";
     this._debug = false;
+    this._lastSig = "";
   }
 
   set hass(hass) {
@@ -109,9 +110,12 @@ class PersonStatePanel extends HTMLElement {
       this._load();
       return;
     }
-    // With debug on, keep the live values fresh as hass updates — but never
-    // re-render while the user is typing in a field (it would drop focus).
-    if (this._debug) {
+    // Repaint when a value we actually display changes (any person's state, the
+    // selected person's composite attributes), so the sidebar and live/debug
+    // readouts stay current. Never repaint while a field is focused — it would
+    // drop the caret mid-edit. The signature is built only from shown values so
+    // churny attributes (gps_accuracy, etc.) don't cause constant re-renders.
+    if (this._liveSig() !== this._lastSig) {
       const ae = this.shadowRoot.activeElement;
       if (!ae || !/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) this.render();
     }
@@ -120,6 +124,22 @@ class PersonStatePanel extends HTMLElement {
   _liveSubject() {
     const cur = this._current();
     return cur && this._hass ? this._hass.states[cur.subject] : null;
+  }
+
+  _liveState(entity_id) {
+    const s = this._hass && this._hass.states ? this._hass.states[entity_id] : null;
+    return s ? s.state : null;
+  }
+
+  _liveSig() {
+    if (!this._hass || !this._subjects) return "";
+    const parts = this._subjects.map((s) => `${s.subject}=${this._liveState(s.subject) ?? "?"}`);
+    const st = this._liveSubject();
+    if (st && this._draft) {
+      for (const ds of this._draft.states) parts.push(`${ds.name}:${st.attributes[ds.name]}`);
+      parts.push(`presence:${st.attributes.presence}`);
+    }
+    return parts.join("|");
   }
 
   async _load() {
@@ -196,6 +216,7 @@ class PersonStatePanel extends HTMLElement {
     if (!this.shadowRoot) return;
     this.shadowRoot.innerHTML = `<style>${this._css()}</style>${this._html()}`;
     this._wire();
+    this._lastSig = this._liveSig();
   }
 
   _entityDatalist() {
@@ -213,12 +234,13 @@ class PersonStatePanel extends HTMLElement {
         Add one via <b>Settings → Devices &amp; Services → Person State → Add</b>, then return here.</div></div>`;
     }
     const cur = this._current();
-    const live = cur && cur.live ? cur.live : {};
+    const liveNow = this._liveSubject();
+    const live = liveNow || (cur && cur.live ? cur.live : {});
     const people = this._subjects
       .map((s) => `
         <button class="person ${s.entry_id === this._selected ? "active" : ""}" data-act="select" data-id="${esc(s.entry_id)}" title="${esc(s.subject || "")}">
           <span class="pname">${esc(this._personName(s))}</span>
-          <span class="pstate">${esc((s.live && s.live.state) ?? "—")}</span>
+          <span class="pstate">${esc(this._liveState(s.subject) ?? (s.live && s.live.state) ?? "—")}</span>
         </button>`)
       .join("");
     const detail = cur
