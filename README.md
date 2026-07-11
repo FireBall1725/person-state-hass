@@ -32,7 +32,9 @@ Then open the **Statecraft** panel in the sidebar to define the states.
 
 ## Defining a state
 
-Each state has an **enter** condition and an optional **hold** condition, both authored the same way: a visual builder of entity rows (with AND/OR and an optional `for:` duration) or raw Home Assistant condition YAML.
+Each state has an **enter** condition and an optional **hold** condition, both authored the same way: a visual builder or raw Home Assistant condition YAML. The **Builder** and **YAML** buttons convert the condition both ways, so you can start in the builder and drop to YAML (or paste YAML and get builder rows back); a condition the builder can't draw, like a template, stays in YAML.
+
+The builder handles what HA users actually write: entity rows tested with `is` / `is not` / `above` / `below`, an optional attribute to match instead of the state, `is home` / `is away` shortcuts for a person (which read the presence behind the composite state), time-of-day windows (including overnight, e.g. after 22:00 and before 05:00), an optional `for:` duration, and nested **groups** with their own AND/OR and an optional `not`, so `(A or B) and C` is expressible.
 
 A state is active when its enter condition is true, or when it was already active and its hold condition is still true. That second clause is generic hysteresis: the state stays latched until a condition you choose breaks it. To keep a person `sleep` in the morning until they open the door, the enter condition is "sleep window on and door closed" and the hold condition is "door closed". When the door opens, the hold goes false and the state drops.
 

@@ -9,6 +9,8 @@ const esc = (s) =>
 
 const KIND_STATE = "state";
 const KIND_NUMERIC = "numeric";
+const KIND_TIME = "time";
+const KIND_GROUP = "group";
 
 // Compact human duration: 180 -> "3m", 3600 -> "1h", 90 -> "1m 30s".
 function humanDur(secs) {
@@ -20,44 +22,69 @@ function humanDur(secs) {
   return [h && `${h}h`, m && `${m}m`, s && `${s}s`].filter(Boolean).join(" ");
 }
 
-// The single "match" operator shown in the UI, derived from the stored
-// kind/negate/above/below quad so the wire format stays unchanged.
+function isPresencePreset(src) {
+  return src.attribute === "presence"
+    && Array.isArray(src.states) && src.states.length === 1 && src.states[0] === "home";
+}
+
+// The "match" operator shown in the dropdown, derived from the stored fields.
 function opOf(src) {
+  if (isPresencePreset(src)) return src.negate ? "is_away" : "is_home";
   if (src.kind === KIND_NUMERIC) return src.above != null ? "above" : "below";
   return src.negate ? "is_not" : "is";
 }
 
 function applyOp(src, op) {
+  const wasPreset = isPresencePreset(src);
   switch (op) {
     case "is": src.kind = KIND_STATE; src.negate = false; break;
     case "is_not": src.kind = KIND_STATE; src.negate = true; break;
     case "above": src.kind = KIND_NUMERIC; if (src.above == null) src.above = src.below ?? 0; src.below = null; break;
     case "below": src.kind = KIND_NUMERIC; if (src.below == null) src.below = src.above ?? 0; src.above = null; break;
+    case "is_home": src.kind = KIND_STATE; src.negate = false; src.attribute = "presence"; src.states = ["home"]; break;
+    case "is_away": src.kind = KIND_STATE; src.negate = true; src.attribute = "presence"; src.states = ["home"]; break;
   }
+  // leaving the home shortcut for a plain match: clear the presence preset
+  if (wasPreset && op !== "is_home" && op !== "is_away") { src.attribute = undefined; src.states = []; }
 }
 
-// Plain-language echo of one row, e.g. "sun.sun is below_horizon".
-function rowText(src) {
-  const ent = src.entity_id || "…";
-  if (src.kind === KIND_NUMERIC) {
-    const b = src.above != null ? `above ${src.above}` : src.below != null ? `below ${src.below}` : "…";
-    return `${ent} ${b}${src.for_seconds ? ` for ${humanDur(src.for_seconds)}` : ""}`;
+// Plain-language echo of one node, recursively.
+function nodeText(node) {
+  const kind = node.kind || KIND_STATE;
+  if (kind === KIND_GROUP) {
+    const inner = (node.sources || []).map(nodeText).join(node.combine === "and" ? " and " : " or ");
+    return `${node.negate ? "not " : ""}(${inner || "…"})`;
   }
-  const v = (src.states || []).join(" or ") || "…";
-  const forp = src.for_seconds ? ` for ${humanDur(src.for_seconds)}` : "";
-  return `${ent} ${src.negate ? "is not" : "is"} ${v}${forp}`;
+  if (kind === KIND_TIME) {
+    const bits = [];
+    if (node.after) bits.push(`after ${node.after}`);
+    if (node.before) bits.push(`before ${node.before}`);
+    return `time ${bits.join(" ") || "…"}`;
+  }
+  const ent = node.entity_id || "…";
+  const forp = node.for_seconds ? ` for ${humanDur(node.for_seconds)}` : "";
+  const op = opOf(node);
+  if (op === "is_home") return `${ent} is home`;
+  if (op === "is_away") return `${ent} is away`;
+  const field = node.attribute ? `${ent}.${node.attribute}` : ent;
+  if (kind === KIND_NUMERIC) {
+    const b = node.above != null ? `above ${node.above}` : node.below != null ? `below ${node.below}` : "…";
+    return `${field} ${b}${forp}`;
+  }
+  const v = (node.states || []).join(" or ") || "…";
+  return `${field} ${node.negate ? "is not" : "is"} ${v}${forp}`;
 }
 
 function builderText(b) {
-  if (!b || !b.sources.length) return "";
+  if (!b || !b.sources || !b.sources.length) return "";
   const joiner = b.combine === "and" ? " · and " : " · or ";
-  return b.sources.map(rowText).join(joiner);
+  return b.sources.map(nodeText).join(joiner);
 }
 
-// stored state -> editable draft state
-function toBuilder(compiled, rows) {
+// stored state -> editable draft state (deep clone; sources may be a tree)
+function toBuilder(rows) {
   return rows
-    ? { combine: rows.combine || "or", sources: (rows.sources || []).map((x) => ({ ...x })) }
+    ? { combine: rows.combine || "or", sources: JSON.parse(JSON.stringify(rows.sources || [])) }
     : { combine: "or", sources: [] };
 }
 
@@ -66,12 +93,12 @@ function toEditorState(s) {
   return {
     name: s.name || "",
     mode: hasBuilder ? "builder" : "yaml",
-    builder: toBuilder(s.condition, s.builder),
+    builder: toBuilder(s.builder),
     yaml: hasBuilder ? "" : JSON.stringify(s.condition ?? {}, null, 2),
     hold: s.hold
       ? {
           mode: s.hold_builder ? "builder" : "yaml",
-          builder: toBuilder(s.hold, s.hold_builder),
+          builder: toBuilder(s.hold_builder),
           yaml: s.hold_builder ? "" : JSON.stringify(s.hold ?? {}, null, 2),
         }
       : null,
@@ -87,7 +114,15 @@ function newHold() {
 }
 
 function newSource() {
-  return { entity_id: "", kind: KIND_STATE, states: [], negate: false, above: null, below: null, for_seconds: null };
+  return { kind: KIND_STATE, entity_id: "", states: [], negate: false, above: null, below: null, for_seconds: null };
+}
+
+function newTime() {
+  return { kind: KIND_TIME, after: "", before: "" };
+}
+
+function newGroup() {
+  return { kind: KIND_GROUP, combine: "and", negate: false, sources: [] };
 }
 
 class StatecraftPanel extends HTMLElement {
@@ -228,7 +263,6 @@ class StatecraftPanel extends HTMLElement {
   }
 
   // ---- model mutations (re-render after structural change) ----------------
-  _builderOf(st, scope) { return scope === "hold" ? st.hold.builder : st.builder; }
   _addState() { this._draft.states.push(newState()); this.render(); }
   _delState(i) { this._draft.states.splice(i, 1); this.render(); }
   _moveState(i, d) {
@@ -238,8 +272,6 @@ class StatecraftPanel extends HTMLElement {
     [a[i], a[j]] = [a[j], a[i]];
     this.render();
   }
-  _addSource(si, scope) { this._builderOf(this._draft.states[si], scope).sources.push(newSource()); this.render(); }
-  _delSource(si, sj, scope) { this._builderOf(this._draft.states[si], scope).sources.splice(sj, 1); this.render(); }
   _toggleHold(si) {
     const st = this._draft.states[si];
     st.hold = st.hold ? null : newHold();
@@ -376,47 +408,83 @@ class StatecraftPanel extends HTMLElement {
   }
 
   // ---- live debug ---------------------------------------------------------
-  _evalRow(src) {
-    const s = this._hass && this._hass.states ? this._hass.states[src.entity_id] : null;
-    if (!src.entity_id) return { value: "—", pass: false, missing: true };
+  _nowHM() {
+    const tz = this._hass && this._hass.config ? this._hass.config.time_zone : undefined;
+    try {
+      return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz }).format(new Date());
+    } catch (e) {
+      return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+    }
+  }
+
+  _evalNode(node) {
+    const kind = node.kind || KIND_STATE;
+    if (kind === KIND_GROUP) {
+      const results = (node.sources || []).map((n) => this._evalNode(n));
+      let pass = node.combine === "and" ? results.every((r) => r.pass) : (results.length ? results.some((r) => r.pass) : true);
+      if (node.negate) pass = !pass;
+      return { pass, group: true };
+    }
+    if (kind === KIND_TIME) {
+      const now = this._nowHM();
+      const a = node.after, b = node.before;
+      let pass;
+      if (a && b) pass = a <= b ? (now >= a && now < b) : (now >= a || now < b);
+      else if (a) pass = now >= a;
+      else if (b) pass = now < b;
+      else pass = true;
+      return { pass, value: now };
+    }
+    const s = this._hass && this._hass.states ? this._hass.states[node.entity_id] : null;
+    if (!node.entity_id) return { value: "—", pass: false, missing: true };
     if (!s) return { value: "unavailable", pass: false, missing: true };
-    const val = s.state;
+    const raw = node.attribute ? s.attributes[node.attribute] : s.state;
+    const val = raw === undefined ? "—" : String(raw);
     let pass;
-    if (src.kind === KIND_NUMERIC) {
-      const n = parseFloat(val);
-      pass = !isNaN(n) && (src.above == null || n > src.above) && (src.below == null || n < src.below);
+    if (kind === KIND_NUMERIC) {
+      const n = parseFloat(raw);
+      pass = !isNaN(n) && (node.above == null || n > node.above) && (node.below == null || n < node.below);
     } else {
-      const inSet = (src.states || []).includes(val);
-      pass = src.negate ? !inSet : inSet;
+      const inSet = (node.states || []).map(String).includes(val);
+      pass = node.negate ? !inSet : inSet;
     }
     let pending = null;
-    if (pass && src.for_seconds) {
+    if (pass && node.for_seconds) {
       const held = (Date.now() - new Date(s.last_changed).getTime()) / 1000;
-      if (held < src.for_seconds) { pass = false; pending = Math.ceil(src.for_seconds - held); }
+      if (held < node.for_seconds) { pass = false; pending = Math.ceil(node.for_seconds - held); }
     }
     return { value: val, pass, pending };
   }
 
+  _dbgNodeChip(node, active) {
+    const kind = node.kind || KIND_STATE;
+    const r = this._evalNode(node);
+    const okMark = active ? "held" : "✗";
+    const okCls = active ? "hold" : "no";
+    if (kind === KIND_GROUP) {
+      const joiner = `<span class="dbg-op">${node.combine === "and" ? "and" : "or"}</span>`;
+      const inner = (node.sources || []).map((n) => this._dbgNodeChip(n, active)).join(joiner) || "…";
+      return `<span class="chip grp ${r.pass ? "ok" : okCls}">${node.negate ? "not " : ""}( ${inner} ) ${r.pass ? "✓" : okMark}</span>`;
+    }
+    if (kind === KIND_TIME) {
+      const bits = [];
+      if (node.after) bits.push(`≥${node.after}`);
+      if (node.before) bits.push(`<${node.before}`);
+      return `<span class="chip ${r.pass ? "ok" : okCls}" title="now ${r.value}">time ${bits.join(" ") || "any"} ${r.pass ? "✓" : okMark}</span>`;
+    }
+    const short = node.entity_id ? (node.entity_id.split(".").slice(1).join(".") || node.entity_id) : "—";
+    const label = node.attribute ? `${short}.${node.attribute}` : short;
+    let cls, mark, extra = "";
+    if (r.missing) { cls = active ? "hold" : "unk"; mark = active ? "held" : "?"; }
+    else if (r.pending != null) { cls = okCls; mark = okMark; extra = ` · ${r.pending}s`; }
+    else { cls = r.pass ? "ok" : "no"; mark = r.pass ? "✓" : "✗"; }
+    return `<span class="chip ${cls}" title="${esc(node.entity_id || "")}">${esc(label)} = ${esc(String(r.value))}${extra} ${mark}</span>`;
+  }
+
   _dbgChips(builder, active) {
     if (!builder.sources.length) return `<span class="dbg-note">no conditions</span>`;
-    return builder.sources.map((src) => {
-      const r = this._evalRow(src);
-      const short = src.entity_id ? (src.entity_id.split(".").slice(1).join(".") || src.entity_id) : "—";
-      let cls, mark, extra = "";
-      // When the engine already has the state active, a row that doesn't pass
-      // is being held (reboot bridge waiving a for:, or a sensor still coming
-      // back), not failing. Show it amber as "held", not a red ✗.
-      if (r.missing) {
-        cls = active ? "hold" : "unk"; mark = active ? "held" : "?";
-      } else if (r.pending != null) {
-        cls = active ? "hold" : "no";
-        mark = active ? "held" : "✗";
-        extra = ` · ${r.pending}s`;
-      } else {
-        cls = r.pass ? "ok" : "no"; mark = r.pass ? "✓" : "✗";
-      }
-      return `<span class="chip ${cls}" title="${esc(src.entity_id || "no entity")}">${esc(short)} = ${esc(String(r.value))}${extra} ${mark}</span>`;
-    }).join("");
+    const joiner = `<span class="dbg-op">${builder.combine === "and" ? "and" : "or"}</span>`;
+    return builder.sources.map((n) => this._dbgNodeChip(n, active)).join(joiner);
   }
 
   _debugBlock(st, live) {
@@ -465,47 +533,118 @@ class StatecraftPanel extends HTMLElement {
       </div>`;
   }
 
-  _builderHtml(b, i, scope) {
-    const rows = b.sources.map((src, sj) => this._sourceHtml(src, i, sj, scope)).join("");
+  // ---- recursive builder tree helpers -------------------------------------
+  _rootBuilder(st, scope) { return scope === "hold" ? st.hold.builder : st.builder; }
+
+  _nodeAt(root, path) {
+    if (!path) return root; // "" -> the root group
+    let node = root;
+    for (const idx of path.split(".")) node = node.sources[+idx];
+    return node;
+  }
+
+  _parentArr(root, path) {
+    const parts = path.split(".");
+    const last = +parts.pop();
+    let node = root;
+    for (const idx of parts) node = node.sources[+idx];
+    return { arr: node.sources, index: last };
+  }
+
+  _childPath(basePath, j) { return basePath === "" ? `${j}` : `${basePath}.${j}`; }
+
+  // ---- rendering ----------------------------------------------------------
+  _builderHtml(b, si, scope) {
+    // the root builder is itself a group; render its body at path ""
+    return `<div class="builder">${this._groupBody(b, si, scope, "")}</div>`;
+  }
+
+  _groupBody(g, si, scope, path) {
+    const rows = (g.sources || [])
+      .map((node, j) => this._nodeHtml(node, si, scope, this._childPath(path, j)))
+      .join("");
     return `
-      <div class="builder">
-        <label class="combine" title="AND = every row must be true. OR = any one row is enough.">Combine
-          <select data-field="combine" data-scope="${scope}" data-si="${i}">
-            <option value="or" ${b.combine === "or" ? "selected" : ""}>Any · OR</option>
-            <option value="and" ${b.combine === "and" ? "selected" : ""}>All · AND</option>
-          </select>
-        </label>
-        ${b.sources.length ? `
-          <div class="src-head">
-            <span>Entity</span>
-            <span title="How to test the entity">Match</span>
-            <span title="State(s) to match (comma-separated for OR), or the numeric threshold">Value</span>
-            <span title="Only true after the entity has held this for the given number of seconds">For (s)</span>
-            <span></span>
-          </div>` : ``}
-        <div class="sources">${rows || `<div class="hint">No conditions yet — add one below.</div>`}</div>
-        <button class="btn small" data-act="add-source" data-scope="${scope}" data-si="${i}" title="Add an entity condition to this rule">+ Add condition</button>
+      <label class="combine" title="AND = every row must be true. OR = any one is enough.">Combine
+        <select data-field="combine" data-scope="${scope}" data-si="${si}" data-path="${path}">
+          <option value="or" ${g.combine === "or" ? "selected" : ""}>Any · OR</option>
+          <option value="and" ${g.combine === "and" ? "selected" : ""}>All · AND</option>
+        </select>
+      </label>
+      <div class="sources">${rows || `<div class="hint">No conditions yet — add one below.</div>`}</div>
+      ${this._addMenu(si, scope, path)}`;
+  }
+
+  _addMenu(si, scope, path) {
+    const a = (act, label, title) =>
+      `<button class="btn small" data-act="${act}" data-scope="${scope}" data-si="${si}" data-path="${path}" title="${title}">${label}</button>`;
+    return `<div class="add-menu">
+      ${a("add-cond", "+ Condition", "Test an entity's state or attribute")}
+      ${a("add-time", "+ Time", "Match a time-of-day window")}
+      ${a("add-group", "+ Group", "A nested ( … ) with its own AND/OR")}
+    </div>`;
+  }
+
+  _nodeHtml(node, si, scope, path) {
+    const kind = node.kind || KIND_STATE;
+    if (kind === KIND_GROUP) return this._groupHtml(node, si, scope, path);
+    if (kind === KIND_TIME) return this._timeHtml(node, si, scope, path);
+    return this._leafHtml(node, si, scope, path);
+  }
+
+  _groupHtml(node, si, scope, path) {
+    const d = (f, ...kv) => `data-scope="${scope}" data-si="${si}" data-path="${path}"`;
+    return `
+      <div class="group">
+        <div class="group-head">
+          <span class="group-tag">group</span>
+          <label class="ck" title="Invert this whole group (NOT)"><input type="checkbox" data-act="toggle-gnot" ${d()} ${node.negate ? "checked" : ""}> not</label>
+          <div class="grow"></div>
+          <button class="icon del" data-act="del-node" ${d()} title="Remove group">✕</button>
+        </div>
+        ${this._groupBody(node, si, scope, path)}
       </div>`;
   }
 
-  _sourceHtml(src, i, sj, scope) {
-    const numeric = src.kind === KIND_NUMERIC;
-    const op = opOf(src);
-    const value = numeric
-      ? `<input class="val" data-field="src_num" data-scope="${scope}" data-si="${i}" data-sj="${sj}" type="number" step="any" placeholder="threshold" value="${(src.above ?? src.below) ?? ""}" title="Numeric threshold">`
-      : `<input class="val" data-field="src_states" data-scope="${scope}" data-si="${i}" data-sj="${sj}" type="text" placeholder="e.g. on, off" value="${esc((src.states || []).join(", "))}" title="State value(s). Comma-separated means 'any of these'.">`;
+  _leafHtml(node, si, scope, path) {
+    const d = `data-scope="${scope}" data-si="${si}" data-path="${path}"`;
+    const numeric = node.kind === KIND_NUMERIC;
+    const op = opOf(node);
+    const preset = op === "is_home" || op === "is_away";
+    const isPerson = (node.entity_id || "").startsWith("person.");
+    const value = preset
+      ? `<span class="val muted-cell">home</span>`
+      : numeric
+        ? `<input class="val" data-field="src_num" ${d} type="number" step="any" placeholder="threshold" value="${(node.above ?? node.below) ?? ""}" title="Numeric threshold">`
+        : `<input class="val" data-field="src_states" ${d} type="text" placeholder="e.g. on, off" value="${esc((node.states || []).join(", "))}" title="State value(s). Comma-separated = any of these.">`;
+    const attr = preset
+      ? ""
+      : `<input class="attr" data-field="src_attr" ${d} type="text" placeholder="attr" value="${esc(node.attribute || "")}" title="Optional: match this attribute instead of the state (e.g. presence)">`;
     return `
       <div class="source">
-        <input class="ent" list="ps-entities" data-field="src_entity" data-scope="${scope}" data-si="${i}" data-sj="${sj}" type="text" placeholder="entity_id" value="${esc(src.entity_id)}" title="${esc(src.entity_id || "Pick an entity")}">
-        <select class="op" data-field="src_op" data-scope="${scope}" data-si="${i}" data-sj="${sj}" title="How to test the entity">
+        <input class="ent" list="ps-entities" data-field="src_entity" ${d} type="text" placeholder="entity_id" value="${esc(node.entity_id)}" title="${esc(node.entity_id || "Pick an entity")}">
+        ${attr}
+        <select class="op" data-field="src_op" ${d} title="How to test the entity">
           <option value="is" ${op === "is" ? "selected" : ""}>is</option>
           <option value="is_not" ${op === "is_not" ? "selected" : ""}>is not</option>
           <option value="above" ${op === "above" ? "selected" : ""}>&gt; above</option>
           <option value="below" ${op === "below" ? "selected" : ""}>&lt; below</option>
+          ${isPerson || preset ? `<option value="is_home" ${op === "is_home" ? "selected" : ""}>is home</option><option value="is_away" ${op === "is_away" ? "selected" : ""}>is away</option>` : ""}
         </select>
         ${value}
-        <input class="for" data-field="src_for" data-scope="${scope}" data-si="${i}" data-sj="${sj}" type="number" min="0" placeholder="—" value="${src.for_seconds ?? ""}" title="Seconds the condition must hold before it counts (optional)">
-        <button class="icon del" title="Remove this condition" data-act="del-source" data-scope="${scope}" data-si="${i}" data-sj="${sj}">✕</button>
+        <input class="for" data-field="src_for" ${d} type="number" min="0" placeholder="—" value="${node.for_seconds ?? ""}" title="Seconds the condition must hold before it counts (optional)">
+        <button class="icon del" title="Remove this condition" data-act="del-node" ${d}>✕</button>
+      </div>`;
+  }
+
+  _timeHtml(node, si, scope, path) {
+    const d = `data-scope="${scope}" data-si="${si}" data-path="${path}"`;
+    return `
+      <div class="source time-row">
+        <span class="tlabel">time</span>
+        <label class="tfield">after <input data-field="time_after" ${d} type="time" value="${esc(node.after || "")}" title="From this time (leave blank for none)"></label>
+        <label class="tfield">before <input data-field="time_before" ${d} type="time" value="${esc(node.before || "")}" title="Until this time. If before is earlier than after, the window crosses midnight."></label>
+        <div class="grow"></div>
+        <button class="icon del" title="Remove time" data-act="del-node" ${d}>✕</button>
       </div>`;
   }
 
@@ -530,8 +669,8 @@ class StatecraftPanel extends HTMLElement {
     const el = e.currentTarget;
     const act = el.dataset.act;
     const si = el.dataset.si !== undefined ? +el.dataset.si : null;
-    const sj = el.dataset.sj !== undefined ? +el.dataset.sj : null;
     const scope = el.dataset.scope || "cond";
+    const path = el.dataset.path;
     switch (act) {
       case "select": this._selected = el.dataset.id; this._status = ""; this._loadDraft(); this.render(); break;
       case "save": this._save(); break;
@@ -543,14 +682,60 @@ class StatecraftPanel extends HTMLElement {
       case "del-state": this._delState(si); break;
       case "up": this._moveState(si, -1); break;
       case "down": this._moveState(si, 1); break;
-      case "add-source": this._addSource(si, scope); break;
-      case "del-source": this._delSource(si, sj, scope); break;
+      case "add-cond": this._addNode(si, scope, path, newSource()); break;
+      case "add-time": this._addNode(si, scope, path, newTime()); break;
+      case "add-group": this._addNode(si, scope, path, newGroup()); break;
+      case "del-node": this._delNode(si, scope, path); break;
+      case "toggle-gnot": {
+        const g = this._nodeAt(this._rootBuilder(this._draft.states[si], scope), path);
+        g.negate = !g.negate; this.render(); break;
+      }
       case "toggle-hold": this._toggleHold(si); break;
-      case "mode":
-        if (scope === "hold") this._draft.states[si].hold.mode = el.dataset.mode;
-        else this._draft.states[si].mode = el.dataset.mode;
-        this.render(); break;
+      case "mode": this._switchMode(si, scope, el.dataset.mode); break;
     }
+  }
+
+  _addNode(si, scope, path, node) {
+    this._nodeAt(this._rootBuilder(this._draft.states[si], scope), path).sources.push(node);
+    this.render();
+  }
+
+  _delNode(si, scope, path) {
+    const { arr, index } = this._parentArr(this._rootBuilder(this._draft.states[si], scope), path);
+    arr.splice(index, 1);
+    this.render();
+  }
+
+  // Builder <-> YAML: convert the current config through the server so it stays
+  // native HA. YAML the builder can't draw keeps the state in YAML mode.
+  async _switchMode(si, scope, mode) {
+    const st = this._draft.states[si];
+    const cur = scope === "hold" ? st.hold : st;
+    if (!cur || cur.mode === mode) return;
+    try {
+      if (mode === "yaml") {
+        const res = await this._hass.connection.sendMessagePromise({
+          type: "statecraft/to_yaml", combine: cur.builder.combine, sources: cur.builder.sources,
+        });
+        cur.yaml = res.yaml || "";
+        cur.mode = "yaml";
+      } else {
+        const res = await this._hass.connection.sendMessagePromise({
+          type: "statecraft/from_yaml", yaml: cur.yaml || "",
+        });
+        if (res.representable === false) {
+          this._status = "That YAML uses a condition the builder can't show, so it stays in YAML mode.";
+          this.render();
+          return;
+        }
+        cur.builder = res.builder || { combine: "or", sources: [] };
+        cur.mode = "builder";
+      }
+      this._status = "";
+    } catch (err) {
+      this._status = `Convert failed: ${(err && err.message) || err}`;
+    }
+    this.render();
   }
 
   _onChange(e) {
@@ -558,12 +743,12 @@ class StatecraftPanel extends HTMLElement {
     const f = el.dataset.field;
     if (!f) return;
     const si = el.dataset.si !== undefined ? +el.dataset.si : null;
-    const sj = el.dataset.sj !== undefined ? +el.dataset.sj : null;
     const scope = el.dataset.scope || "cond";
+    const path = el.dataset.path;
     const d = this._draft;
     const st = si !== null ? d.states[si] : null;
-    const b = st && scope === "hold" && st.hold ? st.hold.builder : st ? st.builder : null;
-    const src = b && sj !== null ? b.sources[sj] : null;
+    const root = st ? this._rootBuilder(st, scope) : null;
+    const node = root && path !== undefined ? this._nodeAt(root, path) : null;
     const val = el.type === "checkbox" ? el.checked : el.value;
     switch (f) {
       case "away_from": d.away_from = val; break;
@@ -571,15 +756,18 @@ class StatecraftPanel extends HTMLElement {
       case "default_state": d.default_state = val; break;
       case "name": st.name = val; break;
       case "yaml": if (scope === "hold") st.hold.yaml = val; else st.yaml = val; break;
-      case "combine": b.combine = val; break;
-      case "src_entity": src.entity_id = val; break;
-      case "src_op": applyOp(src, val); this.render(); break;
-      case "src_states": src.states = val.split(",").map((x) => x.trim()).filter(Boolean); break;
+      case "combine": node.combine = val; break;  // node is the group at path
+      case "src_entity": node.entity_id = val; break;
+      case "src_attr": node.attribute = val || undefined; break;
+      case "src_op": applyOp(node, val); this.render(); break;
+      case "src_states": node.states = val.split(",").map((x) => x.trim()).filter(Boolean); break;
       case "src_num":
-        if (src.above != null) src.above = val === "" ? null : Number(val);
-        else src.below = val === "" ? null : Number(val);
+        if (node.above != null) node.above = val === "" ? null : Number(val);
+        else node.below = val === "" ? null : Number(val);
         break;
-      case "src_for": src.for_seconds = val === "" ? null : Number(val); this._refreshSummary(st, si); break;
+      case "src_for": node.for_seconds = val === "" ? null : Number(val); this._refreshSummary(st, si); break;
+      case "time_after": node.after = val; break;
+      case "time_before": node.before = val; break;
     }
   }
 
@@ -654,10 +842,20 @@ class StatecraftPanel extends HTMLElement {
       .builder { display:flex; flex-direction:column; gap:8px; }
       .combine { font-size:12px; color:var(--secondary-text-color); display:flex; align-items:center; gap:8px; }
       .combine select { width:130px; }
-      .src-head, .source { display:grid; grid-template-columns:minmax(150px,1fr) 108px minmax(110px,1fr) 74px 30px; gap:8px; align-items:center; }
-      .src-head { font-size:10.5px; letter-spacing:.03em; text-transform:uppercase; color:var(--secondary-text-color); padding:0 2px; }
       .sources { display:flex; flex-direction:column; gap:7px; }
-      .source .ent { min-width:0; }
+      .source { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+      .source .ent { flex:1 1 170px; min-width:120px; }
+      .source .attr { flex:0 1 96px; min-width:70px; }
+      .source .op { flex:0 0 auto; }
+      .source .val { flex:1 1 110px; min-width:80px; }
+      .source .for { flex:0 0 70px; width:70px; }
+      .muted-cell { flex:1 1 110px; color:var(--secondary-text-color); font-size:13px; padding:6px 2px; }
+      .time-row .tlabel { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--secondary-text-color); }
+      .time-row .tfield { display:flex; align-items:center; gap:5px; font-size:12px; color:var(--secondary-text-color); }
+      .add-menu { display:flex; gap:6px; flex-wrap:wrap; }
+      .group { border:1px solid var(--divider-color); border-left:3px solid var(--primary-color); border-radius:10px; padding:9px 10px; display:flex; flex-direction:column; gap:8px; background:color-mix(in srgb, var(--primary-color) 5%, transparent); }
+      .group-head { display:flex; align-items:center; gap:10px; }
+      .group-tag { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--primary-color); font-weight:700; }
       .summary { font-size:12px; color:var(--secondary-text-color); font-style:italic; margin-top:2px; padding-left:2px; }
       .hold { margin-top:12px; border-top:1px dashed var(--divider-color); padding-top:10px; }
       .hold-toggle { font-size:13px; }
@@ -686,6 +884,11 @@ class StatecraftPanel extends HTMLElement {
       .chip.no { color:var(--error-color); background:color-mix(in srgb, var(--error-color) 13%, transparent); }
       .chip.unk { color:var(--secondary-text-color); background:var(--card-background-color); border-color:var(--divider-color); }
       .chip.hold { color:var(--warning-color,#e0a400); background:color-mix(in srgb, var(--warning-color,#e0a400) 15%, transparent); }
+      .chip.grp { background:none; border:1px solid var(--divider-color); }
+      .chip.grp.ok { border-color:var(--success-color); }
+      .chip.grp.no { border-color:var(--error-color); }
+      .chip.grp.hold { border-color:var(--warning-color,#e0a400); }
+      .dbg-op { font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:var(--secondary-text-color); margin:0 2px; }
       .btn.add-state { width:100%; margin-bottom:14px; border-style:dashed; }
       .hint { font-size:11.5px; color:var(--secondary-text-color); padding:4px 2px; }
       .empty { text-align:center; color:var(--secondary-text-color); margin-top:40px; line-height:1.7; }
@@ -693,8 +896,6 @@ class StatecraftPanel extends HTMLElement {
         .layout { flex-direction:column; }
         .people { position:static; width:100%; flex:none; }
         .away-grid { grid-template-columns:1fr; }
-        .src-head { display:none; }
-        .source { grid-template-columns:1fr 1fr; }
       }
     `;
   }
