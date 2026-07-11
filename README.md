@@ -1,3 +1,5 @@
+<img src="custom_components/statecraft/brand/icon.png" width="88" align="right" alt="Statecraft">
+
 # Statecraft
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
