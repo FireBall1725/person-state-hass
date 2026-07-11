@@ -57,6 +57,17 @@ person.adalea
 
 A custom scope publishes the same per-state booleans plus an `options` list of every value it can report.
 
+## Example: a custom scope
+
+`statecraft.house_state`, default `idle`, four states top to bottom:
+
+- `party` when the living-room media player is playing and more than four lights are on
+- `night` when a night schedule helper is on and everyone is home
+- `away` when every person is `not_home`
+- `occupied` when any person is home
+
+The first match wins, so `party` beats `occupied` while both are true. The entity reads `idle` when nothing matches, and its `options` attribute lists all five values.
+
 ## Caveat
 
 The person path touches core internals on purpose. Re-test after Home Assistant upgrades that change the person component, and bump `BUILT_AGAINST` in `augment.py`.

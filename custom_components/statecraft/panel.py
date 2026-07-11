@@ -77,7 +77,7 @@ async def async_register_panel(hass: HomeAssistant) -> None:
                 webcomponent_name="statecraft-panel",
                 module_url=MODULE_URL,
                 sidebar_title="Statecraft",
-                sidebar_icon="mdi:account-cog",
+                sidebar_icon="mdi:state-machine",
                 require_admin=True,
                 config={},
                 embed_iframe=False,
