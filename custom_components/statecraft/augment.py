@@ -171,6 +171,19 @@ def _apply_cascade(
     """
     hass = entity.hass
 
+    # First cascade after (re)build: restore the saved composite state and start
+    # the reboot bridge. This must happen on the FIRST evaluation, not later via
+    # async_at_started: on a cold boot the person entity already exists when we
+    # patch it, so a device-tracker update can run the cascade before the
+    # restore would otherwise fire, and remember() would overwrite the persisted
+    # state with the fallback. Priming here uses the saved value as previous.
+    if not engine.primed:
+        engine.primed = True
+        saved = _data(hass).last_state.get(engine.subject.subject_entity_id)
+        if saved is not None:
+            previous_state = saved
+        engine.begin_bridge(saved)
+
     # Circuit breaker: if we're being re-applied in a tight burst, a feedback
     # loop is in progress. Stop applying (leave plain presence) so HA can't be
     # hung, and log once with the watched entities to pinpoint the source.

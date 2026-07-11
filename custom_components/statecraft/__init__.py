@@ -100,7 +100,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             restored = data.last_state.get(subject.subject_entity_id)
             if restored is not None:
                 entity._attr_state = restored  # so first eval sees what we were
-            engine.begin_bridge(restored)  # bridge for: across a reboot
+            # Restore + bridge happen on the first cascade (see _apply_cascade's
+            # priming), which also covers a device-tracker update that fires
+            # before this runs. Just make sure listeners are attached.
             attach_listeners(hass, entity, engine)
 
         entry.async_on_unload(async_at_started(hass, _attach))

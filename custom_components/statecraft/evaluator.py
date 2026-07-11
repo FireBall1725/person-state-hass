@@ -84,6 +84,8 @@ class StateEngine:
         # reboot bridge: which restored state, and until when (monotonic)
         self._bridge_state: str | None = None
         self._bridge_until: float = 0.0
+        # person path: whether the first cascade has restored the saved state yet
+        self.primed: bool = False
         # circuit breaker state (see allow_apply)
         self._apply_times: deque[float] = deque()
         self.tripped: bool = False
