@@ -23,9 +23,13 @@ _LOGGER = logging.getLogger(__name__)
 
 # Circuit breaker: if the cascade is applied more than this many times within
 # the window, assume a feedback loop and stop. This makes it impossible for any
-# loop (known or not) to hang the event loop / take HA down.
+# loop (known or not) to hang the event loop / take HA down. After a cooldown
+# it auto-recovers and retries, so a transient burst (a sensor flapping during a
+# reboot) doesn't permanently disable a scope — only a persistent loop keeps it
+# tripped (it re-trips each time it retries).
 _BREAKER_MAX = 25
 _BREAKER_WINDOW = 2.0  # seconds
+_BREAKER_COOLDOWN = 30.0  # seconds before a tripped breaker retries
 
 # After a restart, HA resets many sensors' last_changed to boot time, so a
 # `for:` in an enter condition is false for its whole duration even if the
@@ -89,22 +93,29 @@ class StateEngine:
         # circuit breaker state (see allow_apply)
         self._apply_times: deque[float] = deque()
         self.tripped: bool = False
+        self._tripped_at: float = 0.0
 
     def allow_apply(self) -> bool:
         """Return False if the cascade is running away (feedback loop).
 
-        Once tripped, stays tripped until the entry reloads (a fresh engine is
-        built). The caller logs the trip once, with the watched entities, so the
-        offending source can be identified without HA going down.
+        Trips after too many applies in the window; auto-recovers after a
+        cooldown so a transient burst doesn't disable the scope forever. A
+        persistent loop simply re-trips on the next retry, so HA stays safe.
         """
-        if self.tripped:
-            return False
         now = time.monotonic()
+        if self.tripped:
+            if now - self._tripped_at < _BREAKER_COOLDOWN:
+                return False
+            # cooldown elapsed: reset and retry
+            self.tripped = False
+            self._apply_times.clear()
+            self._breaker_logged = False
         self._apply_times.append(now)
         while self._apply_times and now - self._apply_times[0] > _BREAKER_WINDOW:
             self._apply_times.popleft()
         if len(self._apply_times) > _BREAKER_MAX:
             self.tripped = True
+            self._tripped_at = now
             return False
         return True
 

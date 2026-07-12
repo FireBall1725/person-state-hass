@@ -933,4 +933,9 @@ class StatecraftPanel extends HTMLElement {
   }
 }
 
-customElements.define("statecraft-panel", StatecraftPanel);
+// A version-stamped module URL reloads this file after an update, but the
+// element name is already registered from the previous load; redefining throws.
+// Guard it (the running definition persists until a full page reload).
+if (!customElements.get("statecraft-panel")) {
+  customElements.define("statecraft-panel", StatecraftPanel);
+}
