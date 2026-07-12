@@ -80,7 +80,7 @@ async def async_register_panel(hass: HomeAssistant) -> None:
                 sidebar_title="Statecraft",
                 sidebar_icon="mdi:state-machine",
                 require_admin=True,
-                config={},
+                config={"version": _version()},
                 embed_iframe=False,
             )
         flags["panel"] = True

@@ -144,6 +144,14 @@ class StatecraftPanel extends HTMLElement {
     this.toggleAttribute("narrow", !!v);
   }
 
+  // HA passes the panel_custom config here; read the version out of it and,
+  // if the header is already drawn, patch it in place (avoids a full re-render).
+  set panel(panel) {
+    this._version = panel && panel.config ? panel.config.version : undefined;
+    const el = this.shadowRoot && this.shadowRoot.querySelector(".topbar-ver");
+    if (el) el.textContent = this._version ? `v${this._version}` : "";
+  }
+
   connectedCallback() {
     if (this._debug) this._startDebugTimer();
   }
@@ -334,9 +342,11 @@ class StatecraftPanel extends HTMLElement {
     // A custom panel gets no HA toolbar, so render one that matches HA's own app
     // header. The menu button is CSS-hidden on desktop (:host([narrow]) shows
     // it), so the sidebar is reachable on mobile without a button on desktop.
+    const ver = this._version ? `v${esc(this._version)}` : "";
     return `<div class="topbar">
       <div class="menu-btn" data-act="menu" title="Open menu"><ha-icon icon="mdi:menu"></ha-icon></div>
       <h1 class="topbar-title">Statecraft</h1>
+      <span class="topbar-ver">${ver}</span>
     </div>`;
   }
 
@@ -837,6 +847,7 @@ class StatecraftPanel extends HTMLElement {
         cursor:pointer; margin-right:8px; --mdc-icon-size:24px; color:inherit; }
       :host([narrow]) .menu-btn { display:flex; }
       .topbar-title { margin:0; flex:1; font-size:20px; font-weight:400; }
+      .topbar-ver { font-size:14px; opacity:.7; margin-left:8px; font-variant-numeric:tabular-nums; }
       .content { flex:1; overflow-y:auto; overflow-x:hidden; padding:16px; }
       .wrap { max-width:880px; margin:0 auto; }
       .layout { display:flex; gap:16px; align-items:flex-start; max-width:1120px; margin:0 auto; }
