@@ -84,3 +84,10 @@ STORAGE_VERSION: Final = 1
 # it wraps, or the person component is gone), so person scopes have silently
 # fallen back to plain presence. Turns a one-line log into a visible Repair.
 ISSUE_PERSON_PATCH: Final = "person_patch_disabled"
+
+# --- Services ---------------------------------------------------------------
+# Manual override: pin a scope to a state for a while, then revert to automatic.
+SERVICE_SET_OVERRIDE: Final = "set_override"
+SERVICE_CLEAR_OVERRIDE: Final = "clear_override"
+ATTR_STATE: Final = "state"
+ATTR_DURATION: Final = "duration"

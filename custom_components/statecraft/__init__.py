@@ -31,6 +31,7 @@ from .entity import StatecraftScope, get_component
 from .evaluator import StateEngine
 from .models import parse_subject
 from .panel import async_register_panel, async_unregister_panel
+from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     engine = StateEngine(hass, subject)
     await engine.async_build()
     data.engines[subject.subject_entity_id] = engine
+
+    async_setup_services(hass)
 
     # The panel is cosmetic; its registration must never take down a scope. If
     # it fails, log and carry on so evaluation still runs.
@@ -136,6 +139,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         remove_augmenter(hass)
     if not data.engines:
         async_unregister_panel(hass)
+        async_unload_services(hass)
 
     return True
 

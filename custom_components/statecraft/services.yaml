@@ -1,0 +1,30 @@
+set_override:
+  fields:
+    entity_id:
+      required: true
+      example: person.adalea
+      selector:
+        entity:
+          domain:
+            - person
+            - statecraft
+    state:
+      required: true
+      example: dnd
+      selector:
+        text:
+    duration:
+      example: "02:00:00"
+      selector:
+        duration:
+
+clear_override:
+  fields:
+    entity_id:
+      required: true
+      example: person.adalea
+      selector:
+        entity:
+          domain:
+            - person
+            - statecraft

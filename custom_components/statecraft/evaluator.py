@@ -90,6 +90,13 @@ class StateEngine:
         self._bridge_until: float = 0.0
         # person path: whether the first cascade has restored the saved state yet
         self.primed: bool = False
+        # manual override (statecraft.set_override): force a state for a while,
+        # bypassing the cascade, then revert to automatic. In-memory only, so a
+        # restart clears it. override_until is a monotonic deadline (None =
+        # indefinite); the service layer owns the revert timer via override_cancel.
+        self.override_state: str | None = None
+        self.override_until: float | None = None
+        self.override_cancel: Any = None
         # circuit breaker state (see allow_apply)
         self._apply_times: deque[float] = deque()
         self.tripped: bool = False
@@ -235,11 +242,49 @@ class StateEngine:
                 return True
         return False
 
+    def set_override(self, state: str, duration_seconds: float | None) -> None:
+        """Force this scope to `state`, bypassing the cascade.
+
+        duration_seconds=None holds it indefinitely (until clear_override). The
+        service layer schedules the revert timer and stores its handle on
+        override_cancel; this only tracks the deadline for the lazy self-clear.
+        """
+        self._cancel_override_timer()
+        self.override_state = state
+        self.override_until = (
+            time.monotonic() + duration_seconds if duration_seconds else None
+        )
+
+    def clear_override(self) -> None:
+        """Drop any manual override and return to automatic evaluation."""
+        self._cancel_override_timer()
+        self.override_state = None
+        self.override_until = None
+
+    def _cancel_override_timer(self) -> None:
+        if self.override_cancel is not None:
+            self.override_cancel()
+            self.override_cancel = None
+
+    def override_active(self) -> bool:
+        """True while a manual override is in force; self-clears once expired."""
+        if self.override_state is None:
+            return False
+        if self.override_until is not None and time.monotonic() >= self.override_until:
+            self.clear_override()
+            return False
+        return True
+
     @callback
     def evaluate(
         self, presence: str | None, previous_state: str | None
     ) -> tuple[str, dict[str, bool]]:
         """Return (composite_state, {state_name: active})."""
+        if self.override_active():
+            # A manual override wins over the cascade; per-state flags reflect it.
+            forced = self.override_state
+            active = {sd.name: sd.name == forced for sd in self.subject.states}
+            return forced, active  # type: ignore[return-value]
         ordered = [
             (sd.name, self._state_on(sd, previous_state)) for sd in self.subject.states
         ]
