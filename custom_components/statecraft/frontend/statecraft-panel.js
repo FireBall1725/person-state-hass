@@ -319,10 +319,12 @@ class StatecraftPanel extends HTMLElement {
     // A custom panel gets no HA toolbar, so render one that matches HA's own
     // app header. The menu button only shows on narrow screens (on desktop the
     // sidebar is docked, same as core pages).
-    const menu = this._narrow
+    // On desktop the sidebar is docked, so reserve the leading area (like core
+    // pages) instead of a button, keeping the title aligned the same either way.
+    const lead = this._narrow
       ? `<button class="menu-btn" data-act="menu" title="Open menu">☰</button>`
-      : "";
-    return `<div class="topbar">${menu}<span class="topbar-title">Statecraft</span></div>`;
+      : `<span class="menu-spacer"></span>`;
+    return `<div class="topbar">${lead}<span class="topbar-title">Statecraft</span></div>`;
   }
 
   _html() {
@@ -814,8 +816,9 @@ class StatecraftPanel extends HTMLElement {
         border-bottom:1px solid var(--divider-color);
         position:sticky; top:0; z-index:4; }
       .menu-btn { background:none; border:none; color:inherit; font-size:22px; line-height:1;
-        cursor:pointer; padding:6px 8px; border-radius:8px; margin-left:-4px; }
+        cursor:pointer; width:40px; height:40px; flex:none; border-radius:50%; }
       .menu-btn:hover { background:var(--secondary-background-color); }
+      .menu-spacer { width:40px; flex:none; }
       .topbar-title { font-size:20px; font-weight:400; }
       .wrap { max-width:880px; margin:0 auto; }
       .layout { display:flex; gap:16px; align-items:flex-start; max-width:1120px; margin:0 auto; }
