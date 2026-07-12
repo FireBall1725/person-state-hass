@@ -137,14 +137,11 @@ class StatecraftPanel extends HTMLElement {
     this._debug = false;
     this._lastSig = "";
     this._debugTimer = null;
-    this._narrow = false;
   }
 
   set narrow(v) {
-    const nv = !!v;
-    if (nv === this._narrow) return;
-    this._narrow = nv;
-    if (this._loaded) this.render();
+    // Reflect to a host attribute; CSS shows the menu button only when narrow.
+    this.toggleAttribute("narrow", !!v);
   }
 
   connectedCallback() {
@@ -316,21 +313,19 @@ class StatecraftPanel extends HTMLElement {
   }
 
   _topbar() {
-    // A custom panel gets no HA toolbar, so render one that matches HA's own
-    // app header. The menu button only shows on narrow screens (on desktop the
-    // sidebar is docked, same as core pages).
-    // On desktop the sidebar is docked, so reserve the leading area (like core
-    // pages) instead of a button, keeping the title aligned the same either way.
-    const lead = this._narrow
-      ? `<button class="menu-btn" data-act="menu" title="Open menu">☰</button>`
-      : `<span class="menu-spacer"></span>`;
-    return `<div class="topbar">${lead}<span class="topbar-title">Statecraft</span></div>`;
+    // A custom panel gets no HA toolbar, so render one that matches HA's own app
+    // header. The menu button is CSS-hidden on desktop (:host([narrow]) shows
+    // it), so the sidebar is reachable on mobile without a button on desktop.
+    return `<div class="topbar">
+      <div class="menu-btn" data-act="menu" title="Open menu"><ha-icon icon="mdi:menu"></ha-icon></div>
+      <h1 class="topbar-title">Statecraft</h1>
+    </div>`;
   }
 
   _html() {
     if (!this._subjects.length) {
-      return `${this._topbar()}<div class="wrap"><div class="empty">No people configured yet.<br>
-        Add one via <b>Settings → Devices &amp; Services → Statecraft → Add</b>, then return here.</div></div>`;
+      return `${this._topbar()}<div class="content"><div class="wrap"><div class="empty">No people configured yet.<br>
+        Add one via <b>Settings → Devices &amp; Services → Statecraft → Add</b>, then return here.</div></div></div>`;
     }
     const cur = this._current();
     const liveNow = this._liveSubject();
@@ -363,13 +358,15 @@ class StatecraftPanel extends HTMLElement {
       : `<div class="empty">Select a person on the left.</div>`;
     return `
       ${this._topbar()}
-      ${this._entityDatalist()}
-      <div class="layout">
-        <aside class="people">
-          <div class="people-title">Scopes</div>
-          ${people}
-        </aside>
-        <main class="detail">${detail}</main>
+      <div class="content">
+        ${this._entityDatalist()}
+        <div class="layout">
+          <aside class="people">
+            <div class="people-title">Scopes</div>
+            ${people}
+          </aside>
+          <main class="detail">${detail}</main>
+        </div>
       </div>`;
   }
 
@@ -805,21 +802,19 @@ class StatecraftPanel extends HTMLElement {
 
   _css() {
     return `
-      :host { display:block; padding:16px; box-sizing:border-box; max-width:100%; overflow-x:hidden;
-        color:var(--primary-text-color);
+      :host { display:flex; flex-direction:column; height:100%; box-sizing:border-box;
+        background:var(--primary-background-color); color:var(--primary-text-color);
         font-family:var(--paper-font-body1_-_font-family, Roboto, sans-serif); }
       * { box-sizing:border-box; }
-      .topbar { display:flex; align-items:center; gap:12px; height:var(--header-height,56px);
-        margin:-16px -16px 16px; padding:0 16px;
-        background:var(--app-header-background-color, var(--primary-background-color));
-        color:var(--app-header-text-color, var(--primary-text-color));
-        border-bottom:1px solid var(--divider-color);
-        position:sticky; top:0; z-index:4; }
-      .menu-btn { background:none; border:none; color:inherit; font-size:22px; line-height:1;
-        cursor:pointer; width:40px; height:40px; flex:none; border-radius:50%; }
-      .menu-btn:hover { background:var(--secondary-background-color); }
-      .menu-spacer { width:40px; flex:none; }
-      .topbar-title { font-size:20px; font-weight:400; }
+      .topbar { display:flex; align-items:center; gap:8px; flex:none;
+        height:var(--header-height,56px); padding:0 16px;
+        background:var(--app-header-background-color, var(--primary-color));
+        color:var(--app-header-text-color, var(--text-primary-color, #fff)); }
+      .menu-btn { display:none; align-items:center; justify-content:center;
+        cursor:pointer; margin-right:8px; --mdc-icon-size:24px; color:inherit; }
+      :host([narrow]) .menu-btn { display:flex; }
+      .topbar-title { margin:0; flex:1; font-size:20px; font-weight:400; }
+      .content { flex:1; overflow-y:auto; overflow-x:hidden; padding:16px; }
       .wrap { max-width:880px; margin:0 auto; }
       .layout { display:flex; gap:16px; align-items:flex-start; max-width:1120px; margin:0 auto; }
       .people { flex:0 0 240px; display:flex; flex-direction:column; gap:6px;
